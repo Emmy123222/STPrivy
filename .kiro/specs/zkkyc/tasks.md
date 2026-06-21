@@ -26,14 +26,14 @@ Incremental implementation of the zkKYC platform. Each task builds on the previo
     - Mock Horizon to fail N times then succeed; assert transaction is eventually submitted
     - Feature: zkkyc (supporting Requirements 10.3)
 
-- [-] 3. Implement Soroban Module
-  - [-] 3.1 Implement `SorobanService` in `src/modules/soroban/`
+- [x] 3. Implement Soroban Module
+  - [x] 3.1 Implement `SorobanService` in `src/modules/soroban/`
     - `invokeContract(contractName, method, args, signerSecret)` — build InvokeHostFunction op, simulate via SorobanRpc, sign, submit, poll until SUCCESS/FAILED
     - `simulateContract(contractName, method, args)` — read-only simulation for is_issuer, is_revoked queries
     - Contract address map loaded from config (one env var per contract)
     - Retry failed RPC calls with exponential backoff up to 5 attempts
     - _Requirements: 11.1, 11.2, 11.3_
-  - [-] 3.2 Implement `SorobanEventIndexer` in `src/modules/soroban/`
+  - [x] 3.2 Implement `SorobanEventIndexer` in `src/modules/soroban/`
     - `startIndexing(fromLedger)` — poll `getEvents` in batches of 200 ledgers on a configurable interval
     - Store/restore last processed ledger in Redis key `soroban:lastLedger`
     - Persist each event to `SorobanEvent` table

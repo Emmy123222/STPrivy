@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { SorobanRpc } from "@stellar/stellar-sdk";
+import { Contract, rpc } from "@stellar/stellar-sdk";
 import { PrismaService } from "../../prisma/prisma.service";
 import Redis from "ioredis";
 
@@ -10,7 +10,7 @@ const BATCH_SIZE = 200; // ledgers per poll
 @Injectable()
 export class SorobanEventIndexer implements OnModuleDestroy {
   private readonly logger = new Logger(SorobanEventIndexer.name);
-  private readonly rpcServer: SorobanRpc.Server;
+  private readonly rpcServer: rpc.Server;
   private readonly redis: Redis;
   private readonly pollIntervalMs: number;
   private timer: NodeJS.Timeout | null = null;
@@ -21,7 +21,7 @@ export class SorobanEventIndexer implements OnModuleDestroy {
     private readonly prisma: PrismaService,
   ) {
     const rpcUrl = this.config.get<string>("SOROBAN_RPC_URL")!;
-    this.rpcServer = new SorobanRpc.Server(rpcUrl, { allowHttp: true });
+    this.rpcServer = new rpc.Server(rpcUrl, { allowHttp: true });
 
     this.redis = new Redis({
       host: this.config.get<string>("REDIS_HOST", "localhost"),
@@ -92,6 +92,7 @@ export class SorobanEventIndexer implements OnModuleDestroy {
 
       const response = await this.rpcServer.getEvents({
         startLedger: fromLedger,
+        endLedger: toLedger,
         filters: [],
         limit: 10000,
       });
@@ -117,14 +118,22 @@ export class SorobanEventIndexer implements OnModuleDestroy {
    * Persist raw Soroban events to the SorobanEvent table.
    * Requirement: 11.4
    */
-  private async persistEvents(events: SorobanRpc.Api.RawEventResponse[]): Promise<void> {
+  private async persistEvents(events: rpc.Api.EventResponse[]): Promise<void> {
     for (const event of events) {
       try {
+        // contractId is a Contract instance after parsing; get the address string
+        const contractAddress = event.contractId instanceof Contract
+          ? event.contractId.contractId()
+          : "";
+
         await this.prisma.sorobanEvent.create({
           data: {
-            contractAddress: event.contractId ?? "",
+            contractAddress,
             eventType: event.type,
-            payload: event.value as object,
+            payload: {
+              value: event.value.toXDR("base64"),
+              topic: event.topic.map((t) => t.toXDR("base64")),
+            },
             ledgerSequence: event.ledger,
             txHash: event.txHash,
           },

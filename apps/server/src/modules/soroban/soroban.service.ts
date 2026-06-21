@@ -8,8 +8,8 @@ import {
   BASE_FEE,
   nativeToScVal,
   xdr,
+  rpc,
 } from "@stellar/stellar-sdk";
-import { SorobanRpc } from "@stellar/stellar-sdk";
 
 export type ContractName =
   | "issuer-registry"
@@ -20,7 +20,7 @@ export type ContractName =
 
 export interface InvokeContractResult {
   txHash: string;
-  result: xdr.ScVal;
+  result: xdr.ScVal | undefined;
 }
 
 // Retry delays: 1s, 2s, 4s, 8s, 16s (exponential backoff)
@@ -33,7 +33,7 @@ async function sleep(ms: number): Promise<void> {
 @Injectable()
 export class SorobanService {
   private readonly logger = new Logger(SorobanService.name);
-  private readonly rpcServer: SorobanRpc.Server;
+  private readonly rpcServer: rpc.Server;
   private readonly networkPassphrase: string;
   private readonly contractAddressMap: Record<string, string>;
 
@@ -41,7 +41,7 @@ export class SorobanService {
     const rpcUrl = this.config.get<string>("SOROBAN_RPC_URL")!;
     const network = this.config.get<string>("STELLAR_NETWORK", "testnet");
 
-    this.rpcServer = new SorobanRpc.Server(rpcUrl, { allowHttp: true });
+    this.rpcServer = new rpc.Server(rpcUrl, { allowHttp: true });
 
     this.networkPassphrase =
       network === "mainnet"
@@ -103,16 +103,16 @@ export class SorobanService {
       // 3. Simulate to get fee estimate and footprint (Requirement 11.1)
       const simResult = await this.rpcServer.simulateTransaction(tx);
 
-      if (SorobanRpc.Api.isSimulationError(simResult)) {
+      if (rpc.Api.isSimulationError(simResult)) {
         throw new Error(`Simulation failed: ${simResult.error}`);
       }
 
-      if (!SorobanRpc.Api.isSimulationSuccess(simResult)) {
+      if (!rpc.Api.isSimulationSuccess(simResult)) {
         throw new Error("Simulation did not return a success response");
       }
 
       // 4. Prepare the transaction (applies soroban-specific fields from simulation)
-      const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
+      const preparedTx = rpc.assembleTransaction(tx, simResult).build();
 
       // 5. Sign
       preparedTx.sign(signerKeypair);
@@ -141,7 +141,7 @@ export class SorobanService {
     contractName: ContractName,
     method: string,
     args: xdr.ScVal[],
-  ): Promise<SorobanRpc.Api.SimulateTransactionSuccessResponse> {
+  ): Promise<rpc.Api.SimulateTransactionSuccessResponse> {
     const contractId = this.resolveContractId(contractName);
     const contract = new Contract(contractId);
 
@@ -161,11 +161,11 @@ export class SorobanService {
 
       const simResult = await this.rpcServer.simulateTransaction(tx);
 
-      if (SorobanRpc.Api.isSimulationError(simResult)) {
+      if (rpc.Api.isSimulationError(simResult)) {
         throw new Error(`Simulation failed: ${simResult.error}`);
       }
 
-      if (!SorobanRpc.Api.isSimulationSuccess(simResult)) {
+      if (!rpc.Api.isSimulationSuccess(simResult)) {
         throw new Error("Simulation did not return a success response");
       }
 
@@ -176,7 +176,7 @@ export class SorobanService {
   /**
    * Poll transaction status until SUCCESS or FAILED (or timeout).
    */
-  private async pollTransaction(txHash: string): Promise<xdr.ScVal> {
+  private async pollTransaction(txHash: string): Promise<xdr.ScVal | undefined> {
     const MAX_POLLS = 20;
     const POLL_INTERVAL_MS = 1500;
 
@@ -185,19 +185,11 @@ export class SorobanService {
 
       const response = await this.rpcServer.getTransaction(txHash);
 
-      if (response.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
-        const resultMetaXdr = response.resultMetaXdr;
-        const meta = xdr.TransactionMeta.fromXDR(resultMetaXdr.toXDR());
-        if (meta.switch().value === 3) {
-          const sorobanMeta = meta.v3().sorobanMeta();
-          if (sorobanMeta) {
-            return sorobanMeta.returnValue();
-          }
-        }
-        return xdr.ScVal.scvVoid();
+      if (response.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+        return (response as rpc.Api.GetSuccessfulTransactionResponse).returnValue;
       }
 
-      if (response.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
+      if (response.status === rpc.Api.GetTransactionStatus.FAILED) {
         throw new Error(`Transaction ${txHash} failed on-chain`);
       }
 
