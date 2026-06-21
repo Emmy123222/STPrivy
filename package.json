@@ -1,0 +1,12 @@
+{
+  "name": "zkkyc",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "yarn workspace @zkkyc/server build",
+    "start": "yarn workspace @zkkyc/server start",
+    "start:dev": "yarn workspace @zkkyc/server start:dev",
+    "test": "yarn workspace @zkkyc/server test",
+    "lint": "yarn workspace @zkkyc/server lint"
+  }
+}

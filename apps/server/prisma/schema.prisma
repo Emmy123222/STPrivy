@@ -1,0 +1,175 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────
+
+enum Role {
+  SUBJECT
+  ISSUER
+  ADMIN
+}
+
+enum CredentialStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum ProofStatus {
+  PENDING
+  GENERATING
+  COMPLETED
+  FAILED
+}
+
+// ─── Models ─────────────────────────────────────────────────────────────────
+
+model User {
+  id             String   @id @default(uuid())
+  stellarAddress String   @unique // Stellar public key G…
+  role           Role     @default(SUBJECT)
+  createdAt      DateTime @default(now())
+
+  did     DID?
+  wallets Wallet[]
+
+  @@map("users")
+}
+
+model Wallet {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publicKey  String   @unique // Stellar public key
+  walletType String   // 'freighter' | 'lobstr' | 'xbull'
+  createdAt  DateTime @default(now())
+
+  @@map("wallets")
+}
+
+model DID {
+  id        String   @id // the DID string itself, e.g. did:stellar:G…
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document  Json     // full DID document
+  createdAt DateTime @default(now())
+
+  @@map("dids")
+}
+
+model Issuer {
+  id             String     @id @default(uuid())
+  did            String     @unique
+  stellarAddress String     @unique
+  name           String
+  registeredAt   DateTime   @default(now())
+  active         Boolean    @default(true)
+  onChainTxHash  String?
+
+  credentials Credential[]
+
+  @@map("issuers")
+}
+
+model Credential {
+  id             String           @id @default(uuid())
+  issuerId       String
+  issuer         Issuer           @relation(fields: [issuerId], references: [id])
+  subjectDID     String
+  type           String[]
+  claims         Json             // { country, age, accredited } — no raw PII
+  proof          Json             // VC proof block
+  credentialHash String           @unique // SHA-256 of claims+meta
+  issuedAt       DateTime         @default(now())
+  expiresAt      DateTime?
+  status         CredentialStatus @default(ACTIVE)
+  onChainTxHash  String?          // Soroban credential registry tx
+
+  revocation Revocation?
+  zkProofs   ZKProof[]
+
+  @@map("credentials")
+}
+
+model Revocation {
+  id            String     @id @default(uuid())
+  credentialId  String     @unique
+  credential    Credential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+  revokedAt     DateTime   @default(now())
+  reason        String?
+  onChainTxHash String?
+
+  @@map("revocations")
+}
+
+model ZKProof {
+  id           String      @id @default(uuid())
+  subjectDID   String
+  credentialId String
+  credential   Credential  @relation(fields: [credentialId], references: [id])
+  circuitId    String      // 'age-proof' | 'residency-proof' | etc.
+  artifact     Json?       // proof bytes + public inputs (set when COMPLETED)
+  generatedAt  DateTime?
+  status       ProofStatus @default(PENDING)
+
+  verifications ProofVerification[]
+
+  @@map("zk_proofs")
+}
+
+model ProofVerification {
+  id            String   @id @default(uuid())
+  proofId       String
+  proof         ZKProof  @relation(fields: [proofId], references: [id])
+  verifierDID   String
+  result        Boolean
+  verifiedAt    DateTime @default(now())
+  onChainTxHash String?
+  metadata      Json?
+
+  @@map("proof_verifications")
+}
+
+model Verification {
+  id          String   @id @default(uuid())
+  subjectDID  String
+  verifierDID String
+  policyId    String
+  decision    String   // 'allow' | 'deny'
+  evaluatedAt DateTime @default(now())
+  metadata    Json?
+
+  @@map("verifications")
+}
+
+model SorobanEvent {
+  id              String   @id @default(uuid())
+  contractAddress String
+  eventType       String
+  payload         Json
+  ledgerSequence  Int
+  txHash          String
+  indexedAt       DateTime @default(now())
+
+  @@map("soroban_events")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  eventName  String
+  actorDID   String
+  subjectDID String?
+  resourceId String
+  timestamp  DateTime @default(now())
+  metadata   Json
+
+  @@map("audit_logs")
+}
