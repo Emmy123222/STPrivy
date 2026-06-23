@@ -1,8 +1,22 @@
 node_modules/
 dist/
+
+# Environment files — never commit secrets
 .env
-.env.test
+.env.*
+!.env.example
+!.env.*.example
+
 *.log
 coverage/
 .DS_Store
+
+# Prisma shadow-DB migrations SQL (generated)
 prisma/migrations/*/migration.sql
+
+# Next.js build output
+.next/
+out/
+
+# TypeScript build info
+*.tsbuildinfo

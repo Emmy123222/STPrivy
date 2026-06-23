@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ── Black-first design token overrides ─────────────────────────────────── */
+  :root {
+    --background: 0 0% 0%;          /* #000000 */
+    --foreground: 40 11% 93%;       /* #F1EFE8 — off-white */
+    --card: 0 0% 6%;                /* #0F0F0F */
+    --card-foreground: 40 11% 93%;
+    --popover: 0 0% 6%;
+    --popover-foreground: 40 11% 93%;
+    --primary: 242 56% 67%;         /* #7F77DD — purple */
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 10%;          /* #1A1A1A */
+    --secondary-foreground: 40 11% 93%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 37 4% 62%;  /* #B4B2A9 */
+    --accent: 0 0% 10%;
+    --accent-foreground: 40 11% 93%;
+    --destructive: 0 73% 59%;       /* #E24B4A */
+    --destructive-foreground: 40 11% 93%;
+    --border: 0 0% 14%;             /* subtle dark border */
+    --input: 0 0% 10%;
+    --ring: 242 56% 67%;
+    --radius: 0.5rem;
+  }
+
+  /* Keep dark identical — the whole app is already dark-first */
+  .dark {
+    --background: 0 0% 0%;
+    --foreground: 40 11% 93%;
+    --card: 0 0% 6%;
+    --card-foreground: 40 11% 93%;
+    --popover: 0 0% 6%;
+    --popover-foreground: 40 11% 93%;
+    --primary: 242 56% 67%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 40 11% 93%;
+    --muted: 0 0% 10%;
+    --muted-foreground: 37 4% 62%;
+    --accent: 0 0% 10%;
+    --accent-foreground: 40 11% 93%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 40 11% 93%;
+    --border: 0 0% 14%;
+    --input: 0 0% 10%;
+    --ring: 242 56% 67%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    background-color: #000000 !important;
+    color: #F1EFE8;
+    @apply bg-background text-foreground;
+  }
+}
