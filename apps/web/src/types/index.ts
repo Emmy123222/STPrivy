@@ -89,6 +89,21 @@ export interface AuditLog {
   metadata?: Record<string, unknown>;
 }
 
+export type ProofRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
+
+export interface ProofRequest {
+  id: string;
+  verifierDID: string;
+  subjectDID: string | null;
+  circuitId: CircuitId;
+  purpose: string;
+  callbackUrl: string | null;
+  expiresAt: string;
+  status: ProofRequestStatus;
+  proofId: string | null;
+  createdAt: string;
+}
+
 export interface PlatformStats {
   totalUsers: number;
   totalCredentials: number;

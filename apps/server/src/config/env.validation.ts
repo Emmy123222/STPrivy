@@ -26,6 +26,9 @@ export const envValidationSchema = Joi.object({
   HORIZON_URL: Joi.string().uri().required(),
   SOROBAN_RPC_URL: Joi.string().uri().required(),
   STELLAR_SERVER_SECRET: Joi.string().required(),
+  STELLAR_SERVER_PUBLIC: Joi.string().optional(),
+  ISSUER_PUBLIC_KEY: Joi.string().optional(),
+  ISSUER_SECRET_KEY: Joi.string().optional(),
 
   // Soroban Contract IDs
   ISSUER_REGISTRY_CONTRACT_ID: Joi.string().required(),

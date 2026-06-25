@@ -12,8 +12,11 @@ import { AuthModule } from './modules/auth/auth.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { StellarModule } from './modules/stellar/stellar.module';
 import { SorobanModule } from './modules/soroban/soroban.module';
-import { AuthModule } from './modules/auth/auth.module';
 import { DIDModule } from './modules/did/did.module';
+import { CredentialModule } from './modules/credentials/credential.module';
+import { ProofModule } from './modules/proofs/proof.module';
+import { AdminModule } from './modules/admin/admin.module';
+import { IssuerModule } from './modules/issuers/issuer.module';
 
 @Module({
   imports: [
@@ -63,8 +66,11 @@ import { DIDModule } from './modules/did/did.module';
     SorobanModule,
 
     // Feature modules
-    AuthModule,
     DIDModule,
+    CredentialModule,
+    ProofModule,
+    IssuerModule,
+    AdminModule,
   ],
   providers: [
     // Apply rate-limiting globally

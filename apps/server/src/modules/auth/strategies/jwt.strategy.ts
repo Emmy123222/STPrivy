@@ -2,10 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
-import { JwtPayload } from '../auth.service';
 import { AuthenticatedUser } from '../../../common/decorators/current-user.decorator';
 
-export interface JwtPayload {
+interface JwtPayload {
   sub: string;
   address: string;
   role: string;

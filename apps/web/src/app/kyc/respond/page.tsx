@@ -1,101 +1,130 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { MessageSquare, ShieldCheck, AlertCircle, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  MessageSquare, ShieldCheck, CheckCircle2, XCircle, Loader2, Clock, AlertCircle,
+} from 'lucide-react';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/layout/empty-state';
-import { useProofs, useVerifyProof } from '@/hooks/use-proofs';
+import { Select } from '@/components/ui/select';
+import { api } from '@/lib/api';
+import { useProofs } from '@/hooks/use-proofs';
+import type { ProofRequest, ZKProof, CircuitId } from '@/types';
 
-const MOCK_REQUESTS = [
-  {
-    id: 'req-001',
-    verifierDID: 'did:stellar:GVERIFIER123...',
-    verifierName: 'DeFi Protocol X',
-    circuitId: 'age-proof',
-    circuitLabel: 'Age Verification (18+)',
-    purpose: 'Required to access trading features',
-    requestedAt: new Date(Date.now() - 300_000).toISOString(),
-    status: 'pending' as const,
-  },
-];
+const CIRCUIT_LABELS: Record<string, string> = {
+  'age-proof': 'Age Verification (18+)',
+  'residency-proof': 'US Residency',
+  'accredited-investor': 'Accredited Investor',
+  'sanctions-check': 'Sanctions Clearance',
+};
 
-type RequestStatus = 'pending' | 'approved' | 'rejected';
+function RequestCard({ req, proofs }: { req: ProofRequest; proofs: ZKProof[] }) {
+  const qc = useQueryClient();
+  const respond = useMutation({
+    mutationFn: (vars: { proofId: string; decision: 'APPROVED' | 'REJECTED' }) =>
+      api.post<ProofRequest>(`/proofs/requests/${req.id}/respond`, vars),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['proof-requests'] }),
+  });
 
-interface ProofRequest {
-  id: string;
-  verifierDID: string;
-  verifierName: string;
-  circuitId: string;
-  circuitLabel: string;
-  purpose: string;
-  requestedAt: string;
-  status: RequestStatus;
-}
+  const matchingProofs = proofs.filter(
+    (p) => p.status === 'COMPLETED' && p.circuitId === req.circuitId,
+  );
 
-function RequestCard({
-  req,
-  onApprove,
-  onReject,
-  isLoading,
-}: {
-  req: ProofRequest;
-  onApprove: () => void;
-  onReject: () => void;
-  isLoading: boolean;
-}) {
+  const selectedProofId = matchingProofs[0]?.id ?? '';
+  const [chosenProofId, setChosenProofId] = React.useState(selectedProofId);
+
+  const statusVariant =
+    req.status === 'APPROVED' ? 'success' :
+    req.status === 'REJECTED' ? 'destructive' :
+    req.status === 'EXPIRED' ? 'secondary' : 'warning';
+
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between gap-2">
           <div>
-            <CardTitle className="text-base">{req.verifierName}</CardTitle>
-            <CardDescription className="mt-0.5 font-mono text-xs">{req.verifierDID}</CardDescription>
+            <CardTitle className="text-base">{CIRCUIT_LABELS[req.circuitId] ?? req.circuitId}</CardTitle>
+            <CardDescription className="mt-0.5 font-mono text-xs truncate max-w-xs">{req.verifierDID}</CardDescription>
           </div>
-          <Badge variant={req.status === 'pending' ? 'warning' : req.status === 'approved' ? 'success' : 'destructive'}>
-            {req.status}
-          </Badge>
+          <Badge variant={statusVariant}>{req.status}</Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="rounded-md border p-3 space-y-2">
-          <div className="flex items-center gap-2 text-sm">
-            <ShieldCheck className="h-4 w-4 text-primary" />
+        <div className="rounded-md border p-3 space-y-2 text-sm">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-primary shrink-0" />
             <span className="font-medium">Requested proof:</span>
-            <span>{req.circuitLabel}</span>
+            <span>{CIRCUIT_LABELS[req.circuitId]}</span>
           </div>
           <div className="text-xs text-muted-foreground">
             <strong>Purpose:</strong> {req.purpose}
           </div>
-          <div className="text-xs text-muted-foreground">
-            <strong>Requested:</strong> {new Date(req.requestedAt).toLocaleString()}
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            Expires {new Date(req.expiresAt).toLocaleString()}
           </div>
         </div>
-        <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
-          Approving will generate a zero-knowledge proof and share it with the verifier.
-          Your raw personal data is never shared.
-        </div>
+
+        {req.status === 'PENDING' && (
+          <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
+            Approving shares a zero-knowledge proof with the requester — your raw personal data is never exposed.
+          </div>
+        )}
+
+        {req.status === 'PENDING' && matchingProofs.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium">Select proof to share</p>
+            <Select value={chosenProofId} onChange={(e) => setChosenProofId(e.target.value)}>
+              {matchingProofs.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {CIRCUIT_LABELS[p.circuitId]} · {p.generatedAt ? new Date(p.generatedAt).toLocaleDateString() : 'recent'}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+
+        {req.status === 'PENDING' && matchingProofs.length === 0 && (
+          <div className="flex items-center gap-2 rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            No completed {CIRCUIT_LABELS[req.circuitId]} proof found. Generate one first.
+          </div>
+        )}
+
+        {respond.isError && (
+          <p className="text-xs text-destructive">{(respond.error as Error).message}</p>
+        )}
       </CardContent>
-      {req.status === 'pending' && (
+
+      {req.status === 'PENDING' && (
         <CardFooter className="gap-3">
           <Button
             className="flex-1"
-            onClick={onApprove}
-            disabled={isLoading}
+            disabled={respond.isPending || matchingProofs.length === 0 || !chosenProofId}
+            onClick={() => respond.mutate({ proofId: chosenProofId, decision: 'APPROVED' })}
           >
-            {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-            Approve & Prove
+            {respond.isPending
+              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Submitting…</>
+              : <><CheckCircle2 className="mr-2 h-4 w-4" />Approve & Share</>}
           </Button>
-          <Button variant="outline" className="flex-1" onClick={onReject} disabled={isLoading}>
+          <Button
+            variant="outline"
+            className="flex-1"
+            disabled={respond.isPending}
+            onClick={() => respond.mutate({ proofId: '', decision: 'REJECTED' })}
+          >
             <XCircle className="mr-2 h-4 w-4" />
             Reject
           </Button>
         </CardFooter>
       )}
-      {req.status === 'approved' && (
+
+      {req.status === 'APPROVED' && (
         <CardFooter>
           <p className="flex items-center gap-2 text-sm text-green-700">
             <CheckCircle2 className="h-4 w-4" /> Proof submitted successfully
@@ -106,35 +135,36 @@ function RequestCard({
   );
 }
 
-export default function ProofRespondPage() {
-  const [requests, setRequests] = useState<ProofRequest[]>(MOCK_REQUESTS);
+// Need React for useState inside RequestCard
+import React from 'react';
+
+function ProofRespondInner() {
+  const searchParams = useSearchParams();
+  const requestId = searchParams.get('requestId');
   const { data: proofs = [] } = useProofs();
-  const verify = useVerifyProof();
 
-  const handleApprove = (id: string) => {
-    const completedProof = proofs.find((p) => p.status === 'COMPLETED');
-    if (completedProof) {
-      verify.mutate(completedProof.id, {
-        onSuccess: () =>
-          setRequests((prev) =>
-            prev.map((r) => (r.id === id ? { ...r, status: 'approved' } : r)),
-          ),
-      });
-    } else {
-      setRequests((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, status: 'approved' } : r)),
-      );
-    }
-  };
+  // If deep-linked to a specific request, fetch just that one
+  const { data: singleRequest, isLoading: singleLoading } = useQuery<ProofRequest>({
+    queryKey: ['proof-request', requestId],
+    queryFn: () => api.get<ProofRequest>(`/proofs/requests/${requestId}`),
+    enabled: !!requestId,
+    retry: false,
+  });
 
-  const handleReject = (id: string) => {
-    setRequests((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, status: 'rejected' } : r)),
-    );
-  };
+  // Otherwise fetch the user's pending inbox
+  const { data: pendingRequests = [], isLoading: listLoading } = useQuery<ProofRequest[]>({
+    queryKey: ['proof-requests'],
+    queryFn: () => api.get<ProofRequest[]>('/proofs/requests/pending'),
+    enabled: !requestId,
+  });
 
-  const pending = requests.filter((r) => r.status === 'pending');
-  const past = requests.filter((r) => r.status !== 'pending');
+  const isLoading = requestId ? singleLoading : listLoading;
+  const requests: ProofRequest[] = requestId
+    ? singleRequest ? [singleRequest] : []
+    : pendingRequests;
+
+  const pending = requests.filter((r) => r.status === 'PENDING');
+  const past = requests.filter((r) => r.status !== 'PENDING');
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -143,7 +173,13 @@ export default function ProofRespondPage() {
         description="Approve or reject verification requests from apps and protocols"
       />
 
-      {pending.length === 0 && past.length === 0 ? (
+      {isLoading ? (
+        <div className="space-y-3">
+          {[1, 2].map((i) => (
+            <div key={i} className="h-48 w-full animate-pulse rounded-xl border bg-muted" />
+          ))}
+        </div>
+      ) : requests.length === 0 ? (
         <EmptyState
           icon={MessageSquare}
           title="No pending requests"
@@ -154,33 +190,25 @@ export default function ProofRespondPage() {
           {pending.length > 0 && (
             <div className="space-y-3">
               <h2 className="text-sm font-semibold text-muted-foreground">Pending ({pending.length})</h2>
-              {pending.map((r) => (
-                <RequestCard
-                  key={r.id}
-                  req={r}
-                  onApprove={() => handleApprove(r.id)}
-                  onReject={() => handleReject(r.id)}
-                  isLoading={verify.isPending}
-                />
-              ))}
+              {pending.map((r) => <RequestCard key={r.id} req={r} proofs={proofs} />)}
             </div>
           )}
           {past.length > 0 && (
             <div className="space-y-3">
               <h2 className="text-sm font-semibold text-muted-foreground">Past Requests</h2>
-              {past.map((r) => (
-                <RequestCard
-                  key={r.id}
-                  req={r}
-                  onApprove={() => {}}
-                  onReject={() => {}}
-                  isLoading={false}
-                />
-              ))}
+              {past.map((r) => <RequestCard key={r.id} req={r} proofs={proofs} />)}
             </div>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+export default function ProofRespondPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-2xl py-12 text-center text-muted-foreground">Loading…</div>}>
+      <ProofRespondInner />
+    </Suspense>
   );
 }

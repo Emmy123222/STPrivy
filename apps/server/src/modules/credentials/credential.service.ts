@@ -93,32 +93,8 @@ export class CredentialService {
     const proof = this.signVC(vcBody, signerKeypair, issuanceDate);
     const vc: VerifiableCredential = { ...vcBody, proof };
 
-    // 6. Anchor credential hash on Soroban (best-effort)
-    let onChainTxHash: string | null = null;
-    try {
-      const invokeResult = await this.sorobanService.invokeContract(
-        "credential-registry",
-        "issue_credential",
-        [
-          nativeToScVal(Buffer.from(credentialHash, "hex"), { type: "bytes" }),
-          nativeToScVal(issuerRecord.stellarAddress, { type: "address" }),
-          nativeToScVal(BigInt(Math.floor(issuanceDate.getTime() / 1000)), {
-            type: "u64",
-          }),
-          expiresAt
-            ? nativeToScVal(BigInt(Math.floor(expiresAt.getTime() / 1000)), {
-                type: "u64",
-              })
-            : nativeToScVal(null),
-        ],
-        serverSecret,
-      );
-      onChainTxHash = invokeResult.txHash;
-    } catch (err) {
-      this.logger.error(
-        `Soroban anchoring failed for credential ${credentialId}: ${(err as Error).message}`,
-      );
-    }
+    // 6. No credential-registry contract is deployed — hash is anchored when revoked
+    const onChainTxHash: string | null = null;
 
     // 7. Persist credential record (Requirement 3.7)
     const dbRecord = await this.prisma.credential.create({
@@ -153,6 +129,22 @@ export class CredentialService {
     this.eventEmitter.emit(DOMAIN_EVENTS.CREDENTIAL_ISSUED, domainEvent);
 
     return vc;
+  }
+
+  async listBySubject(subjectDID: string) {
+    return this.prisma.credential.findMany({
+      where: { subjectDID },
+      orderBy: { issuedAt: 'desc' },
+    });
+  }
+
+  async listByIssuer(issuerDID: string) {
+    const issuerRecord = await this.prisma.issuer.findUnique({ where: { did: issuerDID } });
+    if (!issuerRecord) return [];
+    return this.prisma.credential.findMany({
+      where: { issuerId: issuerRecord.id },
+      orderBy: { issuedAt: 'desc' },
+    });
   }
 
   /**
@@ -214,7 +206,74 @@ export class CredentialService {
       return { valid: false, reason: "revoked" };
     }
 
+    // 4. Check revocation on-chain as secondary source of truth (best-effort)
+    if (record?.credentialHash) {
+      try {
+        const simResult = await this.sorobanService.simulateContract(
+          "revocation-registry",
+          "is_revoked",
+          [nativeToScVal(Buffer.from(record.credentialHash, "hex"), { type: "bytes" })],
+        );
+        const retval = simResult.result?.retval;
+        const revokedOnChain =
+          retval && retval.switch().name === "scvBool" && retval.b();
+        if (revokedOnChain) {
+          return { valid: false, reason: "revoked" };
+        }
+      } catch {
+        // on-chain check is best-effort; proceed with DB result if it fails
+      }
+    }
+
     return { valid: true };
+  }
+
+  /**
+   * Revoke a credential: update DB status and write hash to on-chain revocation-registry.
+   */
+  async revokeCredential(id: string, issuerDID: string) {
+    const credential = await this.prisma.credential.findUnique({
+      where: { id },
+      include: { issuer: true },
+    });
+    if (!credential) throw new NotFoundException(`Credential ${id} not found`);
+    if (credential.issuer.did !== issuerDID) {
+      throw new ForbiddenException("Only the issuer can revoke this credential");
+    }
+    if (credential.status === CredentialStatus.REVOKED) {
+      throw new Error("Credential is already revoked");
+    }
+
+    const updated = await this.prisma.credential.update({
+      where: { id },
+      data: { status: CredentialStatus.REVOKED },
+    });
+
+    // Revoke on-chain (best-effort) — admin key (STELLAR_SERVER_SECRET) required
+    const adminSecret = this.config.get<string>("STELLAR_SERVER_SECRET")!;
+    try {
+      await this.sorobanService.invokeContract(
+        "revocation-registry",
+        "revoke_credential",
+        [nativeToScVal(Buffer.from(credential.credentialHash, "hex"), { type: "bytes" })],
+        adminSecret,
+      );
+      this.logger.log(`revoke_credential on-chain: ${id}`);
+    } catch (err) {
+      this.logger.error(
+        `On-chain revocation failed for ${id}: ${(err as Error).message}`,
+      );
+    }
+
+    this.eventEmitter.emit(DOMAIN_EVENTS.CREDENTIAL_REVOKED, {
+      name: DOMAIN_EVENTS.CREDENTIAL_REVOKED,
+      actorDID: issuerDID,
+      resourceId: id,
+      timestamp: new Date(),
+      metadata: { credentialHash: credential.credentialHash },
+    });
+
+    return updated;
   }
 
   // ── Public helpers ───────────────────────────────────────────────────────

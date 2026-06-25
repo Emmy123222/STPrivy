@@ -12,6 +12,8 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { ChallengeQueryDto, LoginDto, LogoutDto, RefreshDto } from './dto/auth.dto';
 import { Public } from './decorators/public.decorator';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 
 @Controller('auth')
 export class AuthController {
@@ -65,15 +67,9 @@ export class AuthController {
     await this.authService.logout(dto.refreshToken);
   }
 
-
-  @Get('challenge')
-  getChallenge(@Query() query: ChallengeQueryDto): Promise<{ nonce: string }> {
-    return this.authService.generateChallenge(query.address);
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  me(@CurrentUser() user: AuthenticatedUser) {
+    return this.authService.getMe(user.userId);
   }
-
-  /**
-   * Step 2 — verify wallet signature and issue JWT.
-   * POST /auth/login
-   */
-
 }

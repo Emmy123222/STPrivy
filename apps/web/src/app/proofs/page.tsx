@@ -50,8 +50,10 @@ function ProofRow({ proof }: { proof: ZKProof }) {
       <div className="flex items-center gap-2">
         <Badge variant={statusBadge(proof.status)}>{proof.status}</Badge>
         {proof.artifact && (
-          <Button variant="ghost" size="icon" className="h-8 w-8" title="View proof">
-            <ExternalLink className="h-3.5 w-3.5" />
+          <Button variant="ghost" size="icon" className="h-8 w-8" title="View proof" asChild>
+            <Link href={`/proofs/${proof.id}`}>
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Link>
           </Button>
         )}
       </div>

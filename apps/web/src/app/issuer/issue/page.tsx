@@ -47,9 +47,9 @@ export default function IssueCredentialPage() {
     if (values.accredited !== undefined) claims.accredited = values.accredited;
 
     issue.mutate({
-      subjectDID: values.subjectDID,
-      type: [values.type, 'VerifiableCredential'],
-      claims,
+      country: (claims.country as string) ?? 'US',
+      age: (claims.age as number) ?? 0,
+      accredited: (claims.accredited as boolean) ?? false,
       expiresAt: values.expiresAt || undefined,
     });
   };

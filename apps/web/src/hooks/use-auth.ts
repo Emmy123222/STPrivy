@@ -10,16 +10,15 @@ export function useAuth() {
 
   const login = useCallback(
     async (address: string, signMessage: (msg: string) => Promise<string>) => {
-      // Challenge now returns both the nonce and a Stellar transaction XDR to sign
-      const { nonce, xdr } = await api.get<{ nonce: string; xdr: string }>(
-        `/auth/challenge?address=${address}`,
+      // Step 1: Get SEP-10 challenge XDR
+      const { transaction } = await api.get<{ transaction: string; nonce: string }>(
+        `/auth/challenge?publicKey=${address}`,
       );
-      // signMessage receives the XDR and returns the signed XDR
-      const signedXdr = await signMessage(xdr);
+      // Step 2: Sign with wallet
+      const signedTransaction = await signMessage(transaction);
+      // Step 3: Verify + issue JWT
       const { accessToken, user } = await api.post<AuthResponse>('/auth/login', {
-        address,
-        nonce,
-        signedXdr,
+        signedTransaction,
       });
       ctx.setAuth(accessToken, user);
       return user;

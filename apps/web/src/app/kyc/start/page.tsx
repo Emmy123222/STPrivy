@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { CheckCircle2, ExternalLink, ShieldCheck } from 'lucide-react';
 import { PageHeader } from '@/components/layout/page-header';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -43,6 +44,7 @@ const STEPS = [
 
 export default function StartKYCPage() {
   const [selected, setSelected] = useState<string | null>(null);
+  const router = useRouter();
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -109,7 +111,12 @@ export default function StartKYCPage() {
 
       {/* CTA */}
       <div className="flex items-center gap-3">
-        <Button disabled={!selected} size="lg" className="flex-1">
+        <Button
+          disabled={!selected}
+          size="lg"
+          className="flex-1"
+          onClick={() => selected && router.push(`/kyc/form?provider=${selected}`)}
+        >
           Start Verification with {selected ? PROVIDERS.find((p) => p.id === selected)?.name : '…'}
         </Button>
         {selected && (

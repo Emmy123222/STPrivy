@@ -5,10 +5,12 @@ import { createHash, randomUUID } from "crypto";
 import { Keypair, Networks, WebAuth } from "@stellar/stellar-sdk";
 import Redis from "ioredis";
 import { InjectRedis } from "./redis.provider";
+import { PrismaService } from "../../prisma/prisma.service";
 
 export interface JwtPayload {
-  sub: string; // Stellar public key
-  role?: string;
+  sub: string;    // User DB id (UUID)
+  address: string; // Stellar public key
+  role: string;
   iat?: number;
   exp?: number;
 }
@@ -26,6 +28,7 @@ export class AuthService {
   constructor(
     private readonly config: ConfigService,
     private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
     @InjectRedis() private readonly redis: Redis,
   ) {
     const serverSecret = this.config.get<string>("STELLAR_SERVER_SECRET")!;
@@ -127,6 +130,18 @@ export class AuthService {
     return this.issueTokenPair(clientPublicKey);
   }
 
+  async getMe(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, include: { did: true } });
+    if (!user) throw new UnauthorizedException();
+    return {
+      id: user.id,
+      stellarAddress: user.stellarAddress,
+      role: user.role,
+      createdAt: user.createdAt.toISOString(),
+      hasDID: !!user.did,
+    };
+  }
+
   /**
    * Issue a new access token from a valid refresh token.
    * Requirements 1.4, 1.5
@@ -135,12 +150,15 @@ export class AuthService {
     refreshToken: string,
   ): Promise<{ accessToken: string }> {
     const key = this.refreshKey(refreshToken);
-    const publicKey = await this.redis.get(key);
-    if (!publicKey) {
+    const userId = await this.redis.get(key);
+    if (!userId) {
       throw new UnauthorizedException("Invalid or expired refresh token");
     }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException("User not found");
 
-    const accessToken = this.jwtService.sign({ sub: publicKey });
+    const payload: JwtPayload = { sub: user.id, address: user.stellarAddress, role: user.role };
+    const accessToken = this.jwtService.sign(payload);
     return { accessToken };
   }
 
@@ -156,18 +174,36 @@ export class AuthService {
 
   private async issueTokenPair(
     publicKey: string,
-  ): Promise<{ accessToken: string; refreshToken: string }> {
-    const payload: JwtPayload = { sub: publicKey };
+  ): Promise<{ accessToken: string; refreshToken: string; user: { id: string; stellarAddress: string; role: string; createdAt: string; hasDID: boolean } }> {
+    // Upsert user — first login creates the record
+    const user = await this.prisma.user.upsert({
+      where: { stellarAddress: publicKey },
+      create: { stellarAddress: publicKey },
+      update: {},
+      include: { did: true },
+    });
+
+    const payload: JwtPayload = { sub: user.id, address: publicKey, role: user.role };
     const accessToken = this.jwtService.sign(payload);
 
     const refreshToken = randomUUID();
     await this.redis.setex(
       this.refreshKey(refreshToken),
       REFRESH_TTL_SECONDS,
-      publicKey,
+      user.id,
     );
 
-    return { accessToken, refreshToken };
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: user.id,
+        stellarAddress: user.stellarAddress,
+        role: user.role,
+        createdAt: user.createdAt.toISOString(),
+        hasDID: !!(user as typeof user & { did: unknown | null }).did,
+      },
+    };
   }
 
   private nonceKey(nonce: string): string {

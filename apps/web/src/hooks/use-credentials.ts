@@ -31,12 +31,15 @@ export function useIssueCredential() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: {
-      subjectDID: string;
-      type: string[];
-      claims: Record<string, unknown>;
+      country: string;
+      age: number;
+      accredited: boolean;
       expiresAt?: string;
     }) => api.post<Credential>('/credentials/issue', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['issuer-credentials'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['credentials'] });
+      qc.invalidateQueries({ queryKey: ['issuer-credentials'] });
+    },
   });
 }
 

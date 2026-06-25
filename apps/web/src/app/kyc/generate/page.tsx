@@ -1,5 +1,6 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -68,7 +69,7 @@ function ProofResult({ proof }: { proof: ZKProof }) {
   );
 }
 
-export default function GenerateProofPage() {
+function GenerateProofInner() {
   const searchParams = useSearchParams();
   const defaultCredentialId = searchParams.get('credentialId') ?? '';
 
@@ -171,5 +172,13 @@ export default function GenerateProofPage() {
         </form>
       )}
     </div>
+  );
+}
+
+export default function GenerateProofPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-2xl py-12 text-center text-muted-foreground">Loading…</div>}>
+      <GenerateProofInner />
+    </Suspense>
   );
 }

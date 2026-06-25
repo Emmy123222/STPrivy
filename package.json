@@ -2,11 +2,18 @@
   "name": "zkkyc",
   "version": "1.0.0",
   "private": true,
+  "workspaces": ["apps/*"],
   "scripts": {
-    "build": "yarn workspace @zkkyc/server build",
-    "start": "yarn workspace @zkkyc/server start",
-    "start:dev": "yarn workspace @zkkyc/server start:dev",
+    "dev": "concurrently \"yarn workspace @zkkyc/server start:dev\" \"yarn workspace @zkkyc/web dev\"",
+    "build": "yarn workspace @zkkyc/server build && yarn workspace @zkkyc/web build",
+    "build:server": "yarn workspace @zkkyc/server build",
+    "build:web": "yarn workspace @zkkyc/web build",
+    "start:server": "yarn workspace @zkkyc/server start",
+    "start:web": "yarn workspace @zkkyc/web start",
     "test": "yarn workspace @zkkyc/server test",
-    "lint": "yarn workspace @zkkyc/server lint"
+    "lint": "yarn workspace @zkkyc/server lint && yarn workspace @zkkyc/web lint"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
   }
 }

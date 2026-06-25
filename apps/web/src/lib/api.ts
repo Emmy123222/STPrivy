@@ -36,10 +36,20 @@ async function request<T>(
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
   if (!res.ok) {
+    // Expired or missing token — clear session and redirect to login
+    if (res.status === 401 && typeof window !== 'undefined') {
+      const isAuthRoute = path.startsWith('/auth/');
+      if (!isAuthRoute) {
+        localStorage.removeItem('zkkyc:token');
+        window.location.href = '/connect';
+        return undefined as T;
+      }
+    }
     let message = res.statusText;
     try {
       const body = await res.json();
-      message = body.message ?? message;
+      const raw = body.message;
+      message = Array.isArray(raw) ? raw.join(', ') : (raw ?? message);
     } catch {
       // ignore JSON parse failure
     }
