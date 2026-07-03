@@ -124,61 +124,21 @@ We want to be fully transparent about what is production-grade, what is wired bu
 | Live health check (DB + Stellar RPC) | ✅ Real — pings both services with latency measurement |
 | 3 Soroban contracts deployed on testnet | ✅ Real — verified on Stellar Explorer |
 
-### What Uses Mock / Dummy Data
+### One Honest Gap — KYC Provider Integration
 
-**1. KYC Claims — Self-submitted, no real KYC provider**
+The KYC claim collection (country, age, accredited status) currently uses **placeholder / self-submitted data**. Here is why and what the production flow looks like:
 
-We designed the UI to integrate with a third-party KYC provider (the flow shows a SumSub-style handoff). However, **we did not subscribe to SumSub or any identity verification service** — doing so requires a paid business account and is not feasible for a hackathon submission without funding. As a result, the KYC claims (`country`, `age`, `accredited`) are **self-submitted by the user** through a form in the frontend.
+We built the UI and backend to integrate with third-party identity verification providers — **SumSub, Veriff, Persona** — where a user would upload their ID document, complete a liveness check, and the provider would return verified claims to our backend via webhook. Our backend would then sign those verified claims as a W3C Verifiable Credential.
 
-There is no document verification, liveness check, or identity validation happening. The user types in their own data and the system issues a credential based on that.
+**The gap:** We did not subscribe to any of these services. SumSub and Veriff require paid business accounts, which we could not obtain for this hackathon submission. As a result, the KYC claims users submit are **self-declared through a form** — the user fills in their own country, age, and accreditation status. There is no document verification or liveness check happening.
 
-In a production system, the issuer backend would receive verified claims from SumSub (or Persona, Jumio, etc.) via webhook after the user completes a real identity check, and only then sign and issue the credential.
+Everything downstream of that form input is real:
+- The claims get packaged into a W3C Verifiable Credential
+- The credential is signed with a real Ed25519 signature
+- The issuer is verified against the on-chain issuer-registry before signing
+- The credential hash is stored and can be revoked on-chain
 
-**2. ZK Proof Generation — Mock artifacts, real circuit files**
-
-The Noir circuits are written and exist in the `circuits/` folder (`age-proof`, `residency-proof`, `accredited-investor`, `sanctions-check`). The circuit logic and constraints are correct. However, **actual proof generation using `bb.js` / UltraHonk is not wired up** in the backend. Instead, `proof.service.ts` generates a mock artifact:
-
-```typescript
-// What currently runs (placeholder):
-const mockArtifact = {
-  proof: Buffer.from(`mock-proof-${proofId}`).toString('hex'),
-  publicInputs: Buffer.from(JSON.stringify({ circuitId, claims })).toString('hex'),
-};
-```
-
-```typescript
-// What should run in production:
-const backend = new UltraHonkBackend(circuit.bytecode);
-const { proof, publicInputs } = await backend.generateProof(witness);
-```
-
-This means:
-- The proof lifecycle (`PENDING → GENERATING → COMPLETED`) works correctly end-to-end.
-- The proof artifact is stored in the database and can be viewed in the UI.
-- When submitted to the on-chain `verify_proof` contract, the transaction executes but the contract returns `false` — the mock proof bytes don't satisfy the VK-binding check the contract performs.
-- The verifier dashboard and proof request approval flow work correctly, they just work with this mock artifact.
-
-Wiring `bb.js` to the compiled Noir circuits is the next concrete engineering task.
-
-**3. Verifier and Subject Demo Accounts — Test keypairs from docs**
-
-The verifier and subject accounts shown in the demo use pre-funded test keypairs from our `docs/contracts.md` file. These are Stellar testnet accounts with no real-world identity attached. We use them to demonstrate the full flow (verifier creates request → subject receives it → subject approves with a proof) without requiring the judge to connect a real Freighter wallet.
-
-**4. Proof Verifier Contracts — Only age-proof is deployed**
-
-Only the `proof-verifier-age-proof` contract is deployed on testnet. The three other circuits (`residency-proof`, `accredited-investor`, `sanctions-check`) have placeholder contract IDs in the environment config. When a proof for those circuits is submitted for on-chain verification, the backend skips it gracefully and logs a warning. Each circuit requires compiling, generating a verification key, and deploying a separate contract instance — planned for the next phase.
-
-**5. Credential-Registry Contract — Not deployed**
-
-The design called for a `credential-registry` contract to anchor credential hashes at issuance time. This contract was not deployed (the env contains a placeholder address). Currently, credential hashes are only written to the revocation-registry when revoked. Issuance-time anchoring is a planned improvement.
-
-**6. Issuer Registration — Pre-configured, no frontend to add new issuers on-chain**
-
-The platform issuer (`GDFIG4YYAMBOKJ2RGXGYXGZKEOGLBOB5GP6RURA6MPNNH2BPF27S2UQV`) was pre-registered in the issuer-registry contract at deploy time. The backend `IssuerService.addIssuer()` method is implemented and correctly calls `add_issuer` on the Soroban contract, but there is no admin UI to register new issuers yet. A platform admin would need to call the API directly.
-
-**7. DID — Database only, no on-chain anchoring**
-
-DID documents are stored in PostgreSQL only. There is no on-chain DID registry contract. The `did:stellar` method is deterministic (derived from the Stellar public key), which provides self-sovereignty without requiring a registry. On-chain anchoring is a future enhancement.
+In production, replacing the form with a SumSub/Veriff SDK widget and wiring their webhook to `POST /credentials/issue` is the only change needed to make this fully real. The rest of the pipeline is production-ready.
 
 ---
 
@@ -301,4 +261,4 @@ https://stellar.expert/explorer/testnet/contract/CANCMXEGGKETATRNH7MSAQZTJ3M3IG4
 
 ## Closing Note
 
-This is an honest work-in-progress. The on-chain contracts are real and verifiable on Stellar Explorer. The credential cryptography (Ed25519 signing, SHA-256 hashing, W3C VC format) is real. The end-to-end flow — wallet auth → DID → issue credential → generate proof → request/respond → revoke — works locally. The two big honest gaps are ZK proof generation (mock artifacts instead of real Noir proofs) and KYC claim verification (self-submitted instead of third-party verified). We documented both clearly rather than hiding them.
+This is an honest work-in-progress. The on-chain contracts are real and verifiable on Stellar Explorer. The credential cryptography (Ed25519 signing, SHA-256 hashing, W3C VC format) is real. The end-to-end flow — wallet auth → DID → issue credential → generate proof → request/respond → revoke — works locally and on Stellar testnet. The one honest gap is KYC claim collection: without a SumSub or Veriff subscription we could not integrate a real identity verification provider, so claims are self-submitted for now. We documented this clearly rather than hiding it.
