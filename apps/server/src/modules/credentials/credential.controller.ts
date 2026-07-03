@@ -16,6 +16,7 @@ import { Type } from 'class-transformer';
 import { ConfigService } from '@nestjs/config';
 import { Keypair } from '@stellar/stellar-sdk';
 import { CredentialService } from './credential.service';
+import { DIDService } from '../did/did.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -39,6 +40,7 @@ class SelfIssueDto {
 export class CredentialController {
   constructor(
     private readonly credentialService: CredentialService,
+    private readonly didService: DIDService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
   ) {}
@@ -70,10 +72,11 @@ export class CredentialController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: SelfIssueDto,
   ) {
-    // 1. Require the user to have a DID
-    const did = await this.prisma.dID.findUnique({ where: { userId: user.userId } });
+    // 1. Get or auto-create the user's DID
+    let did = await this.prisma.dID.findUnique({ where: { userId: user.userId } });
     if (!did) {
-      throw new BadRequestException('Create your DID first via POST /did/create');
+      await this.didService.createDID(user.userId, user.address);
+      did = await this.prisma.dID.findUnique({ where: { userId: user.userId } });
     }
 
     // 2. Ensure the platform issuer exists in DB (upsert from env config)
