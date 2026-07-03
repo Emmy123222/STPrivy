@@ -44,18 +44,19 @@ import { StellarKycModule } from './modules/stellar-kyc/stellar-kyc.module';
       ignoreErrors: false,
     }),
 
-    // Rate limiting — 20 requests / 60 s per IP globally
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 20 }]),
+    // Rate limiting — 200 requests / 60 s per IP globally
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 200 }]),
 
     // BullMQ root connection (queues registered per-module in later phases)
     BullModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: {
-          host: config.get<string>('redis.host', 'localhost'),
-          port: config.get<number>('redis.port', 6379),
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        const url = config.get<string>('REDIS_URL');
+        const connection = url
+          ? { url }
+          : { host: config.get<string>('redis.host', 'localhost'), port: config.get<number>('redis.port', 6379) };
+        return { connection };
+      },
     }),
 
     // Infrastructure
