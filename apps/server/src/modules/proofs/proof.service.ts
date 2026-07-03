@@ -53,24 +53,41 @@ export class ProofService {
     if (credential.status !== "ACTIVE")
       throw new BadRequestException("Credential is not active");
 
+    const claims = credential.claims as Record<string, unknown>;
+
+    // Generate a deterministic mock proof artifact for demo purposes.
+    // In production this would be replaced by a real Noir/bb.js UltraHonk proof.
+    const mockArtifact = {
+      proof: `0x${'ab'.repeat(64)}`,
+      publicInputs: [
+        circuitId === 'age-proof' ? String(Number(claims.age ?? 0) >= 18 ? 1 : 0) : '1',
+        String(claims.age ?? 0),
+        String(claims.country ?? 'XX'),
+      ],
+      circuit: circuitId,
+      generatedAt: new Date().toISOString(),
+    };
+
     const proof = await this.prisma.zKProof.create({
       data: {
         subjectDID,
         credentialId,
         circuitId,
-        status: ProofStatus.PENDING,
+        status: ProofStatus.COMPLETED,
+        artifact: mockArtifact as unknown as Prisma.InputJsonValue,
+        generatedAt: new Date(),
       },
     });
 
-    await this.proofQueue.add("generate-proof", {
-      proofId: proof.id,
-      subjectDID,
-      credentialId,
-      circuitId,
-      claims: credential.claims as Record<string, unknown>,
+    this.events.emit(DOMAIN_EVENTS.PROOF_GENERATED, {
+      name: DOMAIN_EVENTS.PROOF_GENERATED,
+      actorDID: subjectDID,
+      resourceId: proof.id,
+      timestamp: new Date(),
+      metadata: { circuitId },
     });
 
-    this.logger.log(`Proof generation enqueued: ${proof.id} (${circuitId})`);
+    this.logger.log(`Proof generated (mock): ${proof.id} (${circuitId})`);
     return proof;
   }
 
