@@ -9,6 +9,8 @@ export const InjectRedis = () => Inject(REDIS_CLIENT);
 export const redisProvider = {
   provide: REDIS_CLIENT,
   useFactory: (config: ConfigService): Redis => {
+    const url = config.get<string>('REDIS_URL');
+    if (url) return new Redis(url, { lazyConnect: true, maxRetriesPerRequest: null });
     return new Redis({
       host: config.get<string>('REDIS_HOST', 'localhost'),
       port: config.get<number>('REDIS_PORT', 6379),
