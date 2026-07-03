@@ -894,3 +894,241 @@ Circuits are tested using `nargo test` in each circuit's directory:
 - Contracts tested with Rust's `#[test]` and the Soroban SDK test harness (`soroban_sdk::testutils`)
 - Round-trip tests: `add_issuer` then `is_issuer` returns `true`; `revoke_credential` then `is_revoked` returns `true`
 - Authorization tests: non-admin callers cannot call `add_issuer`/`remove_issuer`
+
+---
+
+## Hybrid Trust Model: Soroban KYC Registry
+
+### Overview
+
+The system implements a **hybrid trust model** that avoids expensive on-chain zero-knowledge proof verification while maintaining cryptographic security through signature verification. This approach is implemented via a dedicated Soroban smart contract (`contracts/soroban/kyc_registry/`).
+
+### Architecture Flow
+
+```mermaid
+sequenceDiagram
+    participant User as User
+    participant Veriff as Veriff
+    participant Backend as Backend
+    participant Noir as Noir Circuit
+    participant Signer as Ed25519 Signer
+    participant Contract as Soroban KYC Registry
+
+    User->>Veriff: Submit identity documents
+    Veriff-->>Backend: Verification result
+    
+    Backend->>Noir: Generate ZK proof
+    Noir-->>Backend: Proof verified
+    
+    Backend->>Backend: Create attestation payload
+    Backend->>Signer: Sign with Ed25519
+    Signer-->>Backend: Signed attestation
+    
+    Backend->>Contract: verify_attestation()
+    Contract->>Contract: Verify signature
+    Contract->>Contract: Check expiration
+    Contract->>Contract: Prevent replay (nonce)
+    Contract->>Contract: Store verification
+    Contract-->>Backend: Transaction hash
+    
+    Backend-->>User: Verification confirmed
+```
+
+### Key Components
+
+#### 1. Soroban KYC Registry Contract
+
+Located at `contracts/soroban/kyc_registry/`, this contract manages on-chain verification status.
+
+**Core Functions:**
+- `initialize(backend_public_key, admin, version)` - One-time setup
+- `verify_attestation(wallet, payload, signature)` - Verify and record attestations
+- `revoke(wallet)` - Admin-only revocation
+- `is_verified(wallet)` - Query verification status
+- `get_verification(wallet)` - Get detailed verification data
+- `rotate_backend_key(new_key)` - Admin-only key rotation
+
+**Security Features:**
+- Ed25519 signature verification for backend attestations
+- Replay protection via nonce tracking
+- Expiration timestamp validation
+- Admin authorization for sensitive operations
+- Backend key rotation support
+- Event emission for audit trail
+
+#### 2. Backend Stellar Integration Module
+
+Located at `apps/server/src/modules/stellar-kyc/`, this module provides:
+
+**Services:**
+- `Ed25519SignerService` - Ed25519 keypair management and signing
+- `AttestationService` - Attestation creation and validation
+- `KycContractService` - Soroban contract interaction
+- `TransactionService` - End-to-end transaction orchestration
+
+**Controller Endpoints:**
+- `POST /stellar-kyc/verify` - Submit verification to contract
+- `POST /stellar-kyc/revoke` - Revoke user verification
+- `GET /stellar-kyc/verified/:wallet` - Check verification status
+- `GET /stellar-kyc/verification/:wallet` - Get verification details
+- `POST /stellar-kyc/rotate-key` - Rotate backend signing key
+- `GET /stellar-kyc/public-key` - Get backend public key
+- `POST /stellar-kyc/initialize` - Initialize contract
+
+### Attestation Format
+
+Attestations are serialized deterministically for signature verification:
+
+```
+wallet|verified|country|age_over_18|issued_at|expires_at|nonce|proof_hash|issuer
+```
+
+**Example:**
+```
+GABCD...|true|NG|true|1780000000|1810000000|0123abcd...|4567efgh...|backend
+```
+
+**Fields:**
+- `wallet`: Stellar address (G...)
+- `verified`: boolean ("true" or "false")
+- `country`: ISO 3166-1 alpha-2 country code
+- `age_over_18`: boolean ("true" or "false")
+- `issued_at`: Unix timestamp (seconds)
+- `expires_at`: Unix timestamp (seconds)
+- `nonce`: 32-byte hex string (unique per attestation)
+- `proof_hash`: 32-byte hex string (hash of Noir proof)
+- `issuer`: String (must be "backend")
+
+### Security Model
+
+#### Trust Assumptions
+
+1. **Backend is Trusted**: The backend is trusted to:
+   - Properly verify Veriff results
+   - Correctly generate and verify Noir proofs
+   - Securely manage the Ed25519 signing key
+   - Only sign valid attestations
+
+2. **Contract is Trustless**: The contract verifies:
+   - Ed25519 signatures on-chain
+   - Attestation expiration
+   - Nonce uniqueness (replay protection)
+   - Admin authorization
+
+#### Security Properties
+
+- **Signature Verification**: All attestations must be signed by the backend's Ed25519 key
+- **Replay Protection**: Each nonce can only be used once
+- **Expiration**: Attestations expire after a configured period (default 1 year)
+- **Admin Control**: Sensitive operations require admin authorization
+- **Key Rotation**: Backend signing key can be rotated by admin
+- **Audit Trail**: All operations emit events for on-chain auditability
+
+#### Threat Mitigations
+
+- **Compromised Backend Key**: Rotate via `rotate_backend_key()` - old attestations remain valid until expiration
+- **Replay Attacks**: Nonce tracking prevents reuse
+- **Expired Attestations**: Timestamp validation rejects expired attestations
+- **Unauthorized Access**: Admin-only functions with address verification
+- **Frontend Tampering**: All signatures verified on-chain
+
+### Integration with Existing System
+
+The hybrid trust model integrates with the existing zkKYC architecture:
+
+1. **Veriff Module**: Provides identity verification results
+2. **Proof Module**: Generates and verifies Noir proofs off-chain
+3. **Stellar-Kyc Module**: Creates signed attestations and submits to Soroban
+4. **Soroban Module**: Existing module can be extended for contract deployment
+5. **Audit Module**: Logs all on-chain events for compliance
+
+### Deployment
+
+#### Contract Deployment
+
+1. Build the contract:
+   ```bash
+   cd contracts/soroban/kyc_registry
+   cargo build --release --target wasm32-unknown-unknown
+   ```
+
+2. Deploy to testnet:
+   ```bash
+   soroban contract deploy --wasm target/wasm/kyc_registry.wasm --source <SECRET> --network testnet
+   ```
+
+3. Initialize the contract:
+   ```bash
+   soroban contract invoke --id <CONTRACT_ID> --source <ADMIN_SECRET> --network testnet \
+     initialize --backend_public_key <BACKEND_PUBKEY> --admin <ADMIN_ADDRESS> --version "1.0.0"
+   ```
+
+#### Backend Configuration
+
+Set environment variables:
+
+```bash
+SOROBAN_KYC_CONTRACT_ID=<deployed_contract_id>
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+STELLAR_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+STELLAR_CONTRACT_ADMIN_SECRET_KEY=<admin_secret_key>
+STELLAR_BACKEND_SECRET_KEY=<backend_signing_secret_key>
+```
+
+Import the module in `app.module.ts`:
+
+```typescript
+import { StellarKycModule } from './modules/stellar-kyc/stellar-kyc.module';
+
+@Module({
+  imports: [
+    // ... other modules
+    StellarKycModule,
+  ],
+})
+export class AppModule {}
+```
+
+### Transaction Flow
+
+1. **User completes Veriff verification**
+2. **Backend generates and verifies Noir proof**
+3. **Backend creates attestation payload with verification data**
+4. **Backend signs attestation with Ed25519 key**
+5. **Backend submits to Soroban contract via `verify_attestation()`**
+6. **Contract verifies signature, expiration, nonce**
+7. **Contract stores verification status on-chain**
+8. **Contract emits `VerificationCompleted` event**
+9. **Backend returns transaction hash to user**
+
+### Events
+
+The contract emits three event types:
+
+- **VerificationCompleted**: When a user is verified
+- **VerificationRevoked**: When a user's verification is revoked
+- **BackendKeyRotated**: When the backend signing key is rotated
+
+These events can be indexed by the existing Soroban event indexer for audit purposes.
+
+### Advantages Over On-Chain ZK Verification
+
+1. **Lower Gas Costs**: Signature verification is cheaper than ZK proof verification
+2. **Faster Transactions**: Ed25519 verification is faster than UltraHonk on-chain
+3. **Simpler Contract**: No need to store verification keys on-chain
+4. **Flexible Upgrades**: Backend logic can be updated without contract changes
+5. **Better Privacy**: Only verification status (not proof details) stored on-chain
+
+### Limitations
+
+1. **Trust in Backend**: Requires trusting the backend to sign only valid attestations
+2. **Key Security**: Backend signing key must be securely managed
+3. **Centralization**: Backend acts as a trusted intermediary
+
+### Future Enhancements
+
+- Multi-sig admin for contract operations
+- Batch verification for multiple users
+- Time-based expiration with automatic cleanup
+- Integration with existing credential registry
+- Cross-chain verification support

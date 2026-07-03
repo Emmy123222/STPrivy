@@ -148,6 +148,19 @@ model ProofRequest {
   @@map("proof_requests")
 }
 
+model VeriffSession {
+  id           String   @id @default(uuid())
+  userId       String
+  sessionId    String   @unique  // Veriff session ID
+  sessionUrl   String
+  status       String   @default("created") // created | approved | declined | resubmission_requested | abandoned | expired
+  credentialId String?  // set after VC is issued on approval
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("veriff_sessions")
+}
+
 model AuditLog {
   id         String   @id @default(uuid())
   eventName  String

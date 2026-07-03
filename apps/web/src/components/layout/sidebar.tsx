@@ -85,8 +85,8 @@ function NavLink({ href, label, icon: Icon }: NavItem) {
       className={cn(
         'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors',
         isActive
-          ? 'bg-primary/10 text-primary font-medium'
-          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+          ? 'bg-primary/15 text-primary font-semibold'
+          : 'text-muted-foreground hover:bg-white/5 hover:text-foreground',
       )}
     >
       <Icon className="h-4 w-4 shrink-0" />
@@ -134,6 +134,12 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
 
   return (
     <aside className="flex h-full w-60 flex-col border-r bg-background">
+      {/* Brand */}
+      <div className="flex items-center gap-2 border-b px-4" style={{ height: 56, flexShrink: 0 }}>
+        <ShieldCheck className="h-4 w-4 text-primary" />
+        <span className="font-mono text-sm font-bold tracking-widest text-foreground">STPrivy</span>
+      </div>
+
       {/* Nav sections */}
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
         {NAV_SECTIONS.map((section) => (

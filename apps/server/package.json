@@ -15,7 +15,7 @@
     "prisma:migrate:deploy": "prisma migrate deploy"
   },
   "dependencies": {
-    "@aztec/bb.js": "^4.3.1",
+    "snarkjs": "^0.7.5",
     "@mavennet/stllr-did-resolver": "^0.1.1",
     "@nestjs/bullmq": "^10.1.1",
     "@nestjs/common": "^10.3.0",
@@ -26,7 +26,6 @@
     "@nestjs/passport": "^10.0.3",
     "@nestjs/platform-express": "^10.3.0",
     "@nestjs/throttler": "^5.1.1",
-    "@noir-lang/noir_js": "^1.0.0-beta.22",
     "@prisma/client": "^5.7.1",
     "@stellar/stellar-sdk": "^16.0.1",
     "bullmq": "^5.1.1",

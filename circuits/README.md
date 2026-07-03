@@ -1,110 +1,100 @@
-# Noir ZK Circuits
+# Circom ZK Circuits (Groth16)
 
-This directory contains standard Noir binary circuits for generating zero-knowledge proofs in the STPrivy zkKYC system. These circuits are **not** Aztec contracts - they are standalone ZK circuits that integrate with the Stellar-based backend.
+This directory contains Circom circuits that generate Groth16 zero-knowledge proofs
+for the STPrivy zkKYC system. Proofs are verified on-chain via the Soroban
+`kyc-registry` contract using BLS12-381 pairing checks.
 
 ## Prerequisites
 
-- [nargo](https://noir-lang.org/docs/getting_started) version 1.0.0+
-- Rust toolchain for bb.js proof generation (optional, for backend integration)
+- [circom](https://docs.circom.io/getting-started/installation/) 2.0+
+- [snarkjs](https://github.com/iden3/snarkjs) `npm install -g snarkjs`
+- Node.js 18+
+- Powers of Tau file: `circuits/powersOfTau28_hez_final_12.ptau`
+  (auto-downloaded by `contracts/deploy.sh`)
 
 ## Circuit Structure
 
-Each circuit is a standard Noir binary package with:
-
 ```
 circuit-name/
-├── Nargo.toml          # Package configuration (type = "bin")
-├── Prover.toml         # Private input values for testing
-├── Verifier.toml       # Public input values for verification
-└── src/
-    └── main.nr         # Circuit logic
+├── src/
+│   └── main.circom       # Circuit logic
+├── input.json            # Sample inputs for testing
+└── target/               # Generated artifacts (gitignored)
+    ├── main.r1cs
+    ├── main_js/
+    │   └── main.wasm
+    ├── circuit-name.zkey
+    └── verification_key.json
 ```
 
 ## Available Circuits
 
-### 1. age-proof
-Proves that a subject's age meets or exceeds a threshold without revealing the actual age.
+### age-proof
+Proves `age >= threshold` without revealing actual age.
+- Private: `age`
+- Public: `threshold`
 
-- **Private input**: `age` (u64)
-- **Public input**: `threshold` (u64)
-- **Logic**: `assert(age >= threshold)`
+### residency-proof
+Proves a country code is in an allowed list of 10 countries.
+- Private: `country_code` (encoded as `charCode[0] * 256 + charCode[1]`)
+- Public: `allowed_countries[10]`, `allowed_count`
 
-### 2. residency-proof
-Proves that a subject's country is in an allowed list without revealing which country.
+### accredited-investor
+Proves the subject is accredited (`flag = 1`) and at least 18.
+- Private: `accredited` (0/1), `age`
 
-- **Private input**: `country_code` ([u8; 2]) - ISO 3166-1 alpha-2
-- **Public inputs**: `allowed_countries` ([[u8; 2]; 10]), `allowed_count` (u32)
-- **Logic**: Iterates through allowed countries and checks for match
-
-### 3. accredited-investor
-Proves that a subject is an accredited investor and is an adult.
-
-- **Private inputs**: `accredited` (bool), `age` (u64)
-- **Public inputs**: none
-- **Logic**: `assert(accredited == true && age >= 18)`
-
-### 4. sanctions-check
-Proves that a subject is not on a sanctions list (simplified hash-based version).
-
-- **Private input**: `sanctions_hash` (Field)
-- **Public input**: `clean_list_commitment` (Field)
-- **Logic**: `assert(sanctions_hash != clean_list_commitment)`
-- **Note**: Full implementation would use Merkle tree inclusion proofs
+### sanctions-check
+Proves the subject's hash does NOT equal the sanctions list commitment.
+- Private: `sanctions_hash`
+- Public: `clean_list_commitment`
 
 ## Development Workflow
 
-### Check Circuit Syntax
+### Compile a circuit
 ```bash
-cd circuits/<circuit-name>
-nargo check
+cd circuits/age-proof
+circom src/main.circom --r1cs --wasm --output target/
 ```
 
-### Execute Circuit (Generate Witness)
+### Trusted setup (one-time per circuit)
 ```bash
-nargo execute
-```
-This uses values from `Prover.toml` and `Verifier.toml` to generate a witness at `target/<circuit_name>.gz`.
+# Download ptau (if not already present)
+curl -L -o ../powersOfTau28_hez_final_12.ptau \
+  https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_12.ptau
 
-### Compile to ACIR
+snarkjs groth16 setup target/main.r1cs ../powersOfTau28_hez_final_12.ptau target/circuit_0000.zkey
+snarkjs zkey contribute target/circuit_0000.zkey target/age-proof.zkey --name="dev" -e="entropy"
+snarkjs zkey export verificationkey target/age-proof.zkey target/verification_key.json
+```
+
+### Generate a proof
 ```bash
-nargo compile
+# Generate witness
+node target/main_js/generate_witness.js target/main_js/main.wasm input.json target/witness.wtns
+
+# Generate Groth16 proof
+snarkjs groth16 prove target/age-proof.zkey target/witness.wtns target/proof.json target/public.json
+
+# Verify locally
+snarkjs groth16 verify target/verification_key.json target/public.json target/proof.json
 ```
-Generates ACIR artifact at `target/<circuit_name>.json` for use with bb.js.
 
-### Run Tests
-```bash
-nargo test
-```
-Runs all `#[test]` functions in the circuit.
+## On-Chain Verification
 
-## Integration with Backend
-
-1. **Compilation**: Circuits are pre-compiled with `nargo compile` before deployment
-2. **Artifact Loading**: Backend loads `target/<circuit_name>.json` at runtime
-3. **Proof Generation**: Backend uses bb.js to generate proofs from witness data
-4. **Verification Key**: VK extracted from `target/vk` directory for on-chain verifier contracts
-
-## Deployment
-
-The `contracts/deploy.sh` script automatically:
+The `contracts/deploy.sh` script:
 1. Compiles all circuits
-2. Deploys a proof-verifier contract instance for each circuit
-3. Initializes each verifier with the corresponding VK from `circuits/<name>/target/vk`
+2. Runs trusted setup to produce `.zkey` files
+3. Exports `verification_key.json` for each circuit
+4. Encodes VKs and uploads them to the `kyc-registry` Soroban contract via `set_vk`
 
-## Testing Values
+The server's `ProofGenerationWorker` uses `snarkjs groth16 prove` to generate proofs,
+then `ProofService` calls the `verify_proof` method on the contract to verify on-chain.
 
-The `Prover.toml` files contain valid test values that satisfy circuit constraints:
+## Encoding
 
-- **age-proof**: age=25, threshold=18 (valid)
-- **residency-proof**: country_code=[85,83] (US), allowed_countries includes US
-- **accredited-investor**: accredited=true, age=25
-- **sanctions-check**: sanctions_hash=123456789, clean_list_commitment=987654321 (different)
+Country codes are encoded as `charCode[0] * 256 + charCode[1]`:
+- US → 85*256 + 83 = 21843
+- GB → 71*256 + 66 = 18242
+- ...
 
-Modify these values to test different scenarios or invalid inputs.
-
-## Notes
-
-- All circuits use standard Noir types (no Aztec-specific APIs)
-- No contract storage or state management
-- Pure functional circuits focused on constraint satisfaction
-- Designed for integration with bb.js UltraHonk backend
+This produces a single field element for the circuit input.

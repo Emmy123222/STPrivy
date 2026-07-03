@@ -257,3 +257,30 @@ The V1 architecture is a NestJS modular monolith (`apps/server/`) backed by Post
 3. WHEN a user with insufficient role attempts an authorized action, THE System SHALL return a 403 Forbidden response.
 4. THE System SHALL validate and sanitize all incoming request payloads using NestJS validation pipes and return 400 Bad Request for malformed inputs.
 5. THE System SHALL apply rate limiting on authentication endpoints to mitigate brute-force attacks.
+
+---
+
+### Requirement 16: Hybrid Trust Model with Soroban KYC Registry
+
+**User Story:** As a system operator, I want to implement a hybrid trust model using a Soroban smart contract for on-chain verification status, so that we can avoid expensive on-chain ZK proof verification while maintaining cryptographic security.
+
+#### Acceptance Criteria
+
+1. WHEN the backend completes Veriff verification and Noir proof generation, THE System SHALL create a signed attestation containing verification data.
+2. THE System SHALL sign attestations using Ed25519 cryptographic signatures with a backend-managed keypair.
+3. WHEN a signed attestation is submitted to the Soroban KYC Registry contract, THE Contract SHALL verify the Ed25519 signature against the stored backend public key.
+4. THE Contract SHALL reject attestations with invalid signatures and return an error.
+5. THE Contract SHALL validate attestation expiration timestamps and reject expired attestations.
+6. THE Contract SHALL validate attestation `issued_at` timestamps and reject attestations issued in the future.
+7. THE Contract SHALL implement replay protection by tracking used nonces and rejecting reused nonces.
+8. WHEN a valid attestation is verified, THE Contract SHALL store the user's verification status on-chain and emit a `VerificationCompleted` event.
+9. THE Contract SHALL support admin-only revocation of user verifications via the `revoke` function.
+10. THE Contract SHALL support admin-only backend public key rotation via the `rotate_backend_key` function.
+11. THE Contract SHALL provide a `is_verified` function to query whether a wallet is currently verified.
+12. THE Contract SHALL provide a `get_verification` function to retrieve detailed verification data for a wallet.
+13. THE Backend SHALL provide a Stellar-Kyc module with services for signing attestations, interacting with the Soroban contract, and orchestrating transactions.
+14. THE Backend SHALL expose REST endpoints for submitting verifications, revoking users, checking verification status, and rotating backend keys.
+15. THE Backend SHALL securely manage the Ed25519 signing key and support key rotation.
+16. THE System SHALL emit audit events for all on-chain contract interactions for compliance purposes.
+17. THE Contract SHALL be initialized with a backend public key, admin address, and version, and can only be initialized once.
+18. THE Contract SHALL verify that the attestation issuer is "backend" and reject attestations from other issuers.

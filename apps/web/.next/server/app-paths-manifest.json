@@ -1,0 +1,10 @@
+{
+  "/connect/page": "app/connect/page.js",
+  "/kyc/generate/page": "app/kyc/generate/page.js",
+  "/proofs/page": "app/proofs/page.js",
+  "/proofs/[id]/page": "app/proofs/[id]/page.js",
+  "/credentials/page": "app/credentials/page.js",
+  "/kyc/start/page": "app/kyc/start/page.js",
+  "/kyc/form/page": "app/kyc/form/page.js",
+  "/dashboard/page": "app/dashboard/page.js"
+}

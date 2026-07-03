@@ -15,6 +15,7 @@ export type ContractName =
   | "issuer-registry"
   | "credential-registry"
   | "revocation-registry"
+  | "kyc-registry"
   | "proof-verifier"
   | `proof-verifier-${string}`;
 
@@ -54,6 +55,7 @@ export class SorobanService {
       "issuer-registry": this.config.get<string>("ISSUER_REGISTRY_CONTRACT_ID", ""),
       "credential-registry": this.config.get<string>("CREDENTIAL_REGISTRY_CONTRACT_ID", ""),
       "revocation-registry": this.config.get<string>("REVOCATION_REGISTRY_CONTRACT_ID", ""),
+      "kyc-registry": this.config.get<string>("KYC_REGISTRY_CONTRACT_ID", ""),
       "proof-verifier-age-proof": this.config.get<string>("PROOF_VERIFIER_CONTRACT_ID_AGE_PROOF", ""),
       "proof-verifier-residency-proof": this.config.get<string>("PROOF_VERIFIER_CONTRACT_ID_RESIDENCY_PROOF", ""),
       "proof-verifier-accredited-investor": this.config.get<string>("PROOF_VERIFIER_CONTRACT_ID_ACCREDITED_INVESTOR", ""),

@@ -1,0 +1,22 @@
+node_modules/
+dist/
+
+# Environment files — never commit secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+*.log
+coverage/
+.DS_Store
+
+# Prisma shadow-DB migrations SQL (generated)
+prisma/migrations/*/migration.sql
+
+# Noir circuit build artifacts (proofs are ephemeral; compiled artifacts and vk are committed)
+circuits/**/target/proof
+circuits/**/target/public_inputs
+circuits/**/target/witness
+circuits/**/target/*.gz
+.kiroChanges pushed to feature/release-checklist branch.

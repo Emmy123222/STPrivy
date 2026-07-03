@@ -59,6 +59,7 @@
   body {
     background-color: #000000 !important;
     color: #F1EFE8;
+    font-family: var(--font-space-mono), 'Space Mono', monospace;
     @apply bg-background text-foreground;
   }
 }

@@ -17,6 +17,8 @@ import { CredentialModule } from './modules/credentials/credential.module';
 import { ProofModule } from './modules/proofs/proof.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { IssuerModule } from './modules/issuers/issuer.module';
+import { VeriffModule } from './modules/veriff/veriff.module';
+import { StellarKycModule } from './modules/stellar-kyc/stellar-kyc.module';
 
 @Module({
   imports: [
@@ -71,6 +73,8 @@ import { IssuerModule } from './modules/issuers/issuer.module';
     ProofModule,
     IssuerModule,
     AdminModule,
+    VeriffModule,
+    StellarKycModule,
   ],
   providers: [
     // Apply rate-limiting globally

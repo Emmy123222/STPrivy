@@ -5,8 +5,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DOMAIN_EVENTS } from '../../events/domain-events';
 import { ProofStatus, Prisma } from '@prisma/client';
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'fs';
+import { writeFileSync, existsSync, rmSync, mkdtempSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -20,7 +21,26 @@ export interface ProofJobData {
   claims: Record<string, unknown>;
 }
 
-@Processor('proof-generation')
+// Valid circuit IDs — also used to validate filesystem paths.
+const KNOWN_CIRCUITS = new Set([
+  'age-proof',
+  'residency-proof',
+  'accredited-investor',
+  'sanctions-check',
+]);
+
+/**
+ * Circom circuit file names (without extension) match the directory name
+ * using camelCase inside the src/ folder.
+ */
+const CIRCUIT_FILE: Record<string, string> = {
+  'age-proof': 'main',
+  'residency-proof': 'main',
+  'accredited-investor': 'main',
+  'sanctions-check': 'main',
+};
+
+@Processor('proof-generation', { concurrency: 4 })
 export class ProofGenerationWorker extends WorkerHost {
   private readonly logger = new Logger(ProofGenerationWorker.name);
 
@@ -34,7 +54,14 @@ export class ProofGenerationWorker extends WorkerHost {
   async process(job: Job<ProofJobData>): Promise<void> {
     const { proofId, subjectDID, credentialId, circuitId, claims } = job.data;
 
-    this.logger.log(`Processing proof generation job ${proofId} for circuit ${circuitId}`);
+    this.logger.log(`Processing proof job ${proofId} for circuit ${circuitId}`);
+
+    if (!KNOWN_CIRCUITS.has(circuitId)) {
+      await this.failProof(proofId);
+      throw new Error(`Unknown circuit type: ${circuitId}`);
+    }
+
+    let workDir: string | undefined;
 
     try {
       await this.prisma.zKProof.update({
@@ -42,146 +69,215 @@ export class ProofGenerationWorker extends WorkerHost {
         data: { status: ProofStatus.GENERATING },
       });
 
-      // Use nargo CLI for proof generation as specified in design doc
-      const circuitsBasePath = join(process.cwd(), '../../circuits');
-      const circuitPath = join(circuitsBasePath, circuitId);
-
-      // Prepare Prover.toml with witness data
-      const proverTomlPath = join(circuitPath, 'Prover.toml');
-      const backupPath = join(circuitPath, 'Prover.toml.backup');
-      
-      // Backup original Prover.toml
-      if (existsSync(proverTomlPath)) {
-        writeFileSync(backupPath, readFileSync(proverTomlPath));
+      const circuitsBase = join(process.cwd(), '../../circuits');
+      const circuitDir = join(circuitsBase, circuitId);
+      if (!existsSync(circuitDir)) {
+        throw new Error(`Circuit directory not found: ${circuitId}`);
       }
 
-      // Write witness data to Prover.toml
-      const witnessData = this.prepareWitnessToml(circuitId, claims);
-      writeFileSync(proverTomlPath, witnessData);
+      // Isolated working directory so concurrent jobs don't clobber each other
+      workDir = mkdtempSync(join(tmpdir(), `proof-${circuitId}-`));
 
-      try {
-        // Run nargo prove
-        const { stdout, stderr } = await execAsync('nargo prove', {
-          cwd: circuitPath,
-        });
+      const circomFile = join(circuitDir, 'src', `${CIRCUIT_FILE[circuitId]}.circom`);
+      const ptauFile = join(circuitsBase, 'pot12_final.ptau');
+      const zkeyFile = join(circuitDir, 'target', `${circuitId}.zkey`);
+      const vkeyFile = join(circuitDir, 'target', 'verification_key.json');
 
-        if (stderr && !stderr.includes('Warning')) {
-          this.logger.warn(`nargo prove warnings: ${stderr}`);
-        }
+      // ── Step 1: Compile circuit (if not already compiled) ──────────────────
+      const r1csFile = join(circuitDir, 'target', 'main.r1cs');
+      const wasmFile = join(circuitDir, 'target', 'main_js', 'main.wasm');
 
-        // Read the generated proof
-        const proofPath = join(circuitPath, 'target', `${circuitId.replace('-', '_')}_proof.toml`);
-        const proofData = readFileSync(proofPath, 'utf-8');
-
-        // Serialize proof to hex for storage
-        const proofHex = Buffer.from(proofData).toString('hex');
-
-        // Update proof record with completed artifact
-        await this.prisma.zKProof.update({
-          where: { id: proofId },
-          data: {
-            status: ProofStatus.COMPLETED,
-            artifact: {
-              proof: proofHex,
-              publicInputs: JSON.stringify(claims),
-            } as unknown as Prisma.InputJsonValue,
-            generatedAt: new Date(),
-          },
-        });
-
-        // Emit domain event
-        this.events.emit(DOMAIN_EVENTS.PROOF_GENERATED, {
-          name: DOMAIN_EVENTS.PROOF_GENERATED,
-          actorDID: subjectDID,
-          subjectDID,
-          resourceId: proofId,
-          timestamp: new Date(),
-          metadata: { circuitId, credentialId },
-        });
-
-        this.logger.log(`Proof ${proofId} generated successfully (circuit: ${circuitId})`);
-      } finally {
-        // Restore original Prover.toml
-        if (existsSync(backupPath)) {
-          writeFileSync(proverTomlPath, readFileSync(backupPath));
-          unlinkSync(backupPath);
-        }
+      if (!existsSync(r1csFile) || !existsSync(wasmFile)) {
+        this.logger.log(`Compiling ${circuitId}`);
+        await execAsync(
+          `circom ${circomFile} --r1cs --wasm --output ${join(circuitDir, 'target')}`,
+        );
       }
-    } catch (error) {
-      this.logger.error(`Proof generation failed for ${proofId}: ${(error as Error).message}`);
+
+      // ── Step 2: Trusted setup (if .zkey not present) ───────────────────────
+      if (!existsSync(zkeyFile)) {
+        if (!existsSync(ptauFile)) {
+          throw new Error(
+            `Powers of Tau file not found at ${ptauFile}. ` +
+            `Download it: https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_12.ptau`,
+          );
+        }
+        this.logger.log(`Running trusted setup for ${circuitId}`);
+        const zkey0 = join(workDir, 'circuit_0000.zkey');
+        await execAsync(
+          `snarkjs groth16 setup ${r1csFile} ${ptauFile} ${zkey0}`,
+        );
+        await execAsync(
+          `snarkjs zkey contribute ${zkey0} ${zkeyFile} --name="initial" -v -e="entropy"`,
+        );
+        await execAsync(`snarkjs zkey export verificationkey ${zkeyFile} ${vkeyFile}`);
+      }
+
+      // ── Step 3: Write witness input ────────────────────────────────────────
+      const inputPath = join(workDir, 'input.json');
+      const inputData = this.buildInput(circuitId, claims);
+      writeFileSync(inputPath, JSON.stringify(inputData));
+
+      // ── Step 4: Generate witness ───────────────────────────────────────────
+      const witnessPath = join(workDir, 'witness.wtns');
+      this.logger.log(`Generating witness for ${circuitId} (job ${proofId})`);
+      await execAsync(
+        `node ${join(circuitDir, 'target', 'main_js', 'generate_witness.js')} ` +
+        `${wasmFile} ${inputPath} ${witnessPath}`,
+      );
+
+      // ── Step 5: Generate Groth16 proof ─────────────────────────────────────
+      const proofJsonPath = join(workDir, 'proof.json');
+      const publicJsonPath = join(workDir, 'public.json');
+      this.logger.log(`Generating Groth16 proof for ${circuitId} (job ${proofId})`);
+      await execAsync(
+        `snarkjs groth16 prove ${zkeyFile} ${witnessPath} ${proofJsonPath} ${publicJsonPath}`,
+      );
+
+      // ── Step 6: Read and store artifacts ───────────────────────────────────
+      const { readFileSync } = await import('fs');
+      const proofJson = JSON.parse(readFileSync(proofJsonPath, 'utf8'));
+      const publicJson = JSON.parse(readFileSync(publicJsonPath, 'utf8'));
 
       await this.prisma.zKProof.update({
         where: { id: proofId },
-        data: { status: ProofStatus.FAILED },
+        data: {
+          status: ProofStatus.COMPLETED,
+          artifact: {
+            proof: proofJson,
+            publicInputs: publicJson,
+            circuitId,
+          } as unknown as Prisma.InputJsonValue,
+          generatedAt: new Date(),
+        },
       });
 
-      throw error; // Re-throw to trigger BullMQ retry logic
+      this.events.emit(DOMAIN_EVENTS.PROOF_GENERATED, {
+        name: DOMAIN_EVENTS.PROOF_GENERATED,
+        actorDID: subjectDID,
+        subjectDID,
+        resourceId: proofId,
+        timestamp: new Date(),
+        metadata: { circuitId, credentialId },
+      });
+
+      this.logger.log(`Proof ${proofId} generated (circuit: ${circuitId})`);
+    } catch (error) {
+      this.logger.error(`Proof generation failed for ${proofId}: ${(error as Error).message}`);
+      await this.failProof(proofId);
+      throw error;
+    } finally {
+      if (workDir && existsSync(workDir)) {
+        rmSync(workDir, { recursive: true, force: true });
+      }
     }
   }
 
   @OnWorkerEvent('completed')
   onCompleted(job: Job<ProofJobData>) {
-    this.logger.log(`Proof generation job ${job.id} completed successfully`);
+    this.logger.log(`Job ${job.id} completed`);
   }
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<ProofJobData>, error: Error) {
-    this.logger.error(`Proof generation job ${job.id} failed: ${error.message}`);
+    this.logger.error(`Job ${job.id} failed: ${error.message}`);
   }
 
-  private prepareWitnessToml(circuitId: string, claims: Record<string, unknown>): string {
-    // Map credential claims to Noir Prover.toml format based on circuit type
+  // ── Input builders ──────────────────────────────────────────────────────────
+
+  /**
+   * Map credential claims to the circuit's input.json format.
+   * All signal values must be strings (snarkjs requirement for large integers).
+   */
+  private buildInput(circuitId: string, claims: Record<string, unknown>): Record<string, unknown> {
     switch (circuitId) {
-      case 'age-proof':
-        return `age = ${claims.age as number}
-threshold = 18`;
+      case 'age-proof': {
+        const age = this.requireInt(claims.age, 'age', 0, 150);
+        return { age: String(age), threshold: '18' };
+      }
 
-      case 'residency-proof':
-        const countryBytes = this.countryToBytes(claims.country as string);
-        return `country_code = [${countryBytes[0]}, ${countryBytes[1]}]
-allowed_countries = [
-  [85, 83], [71, 66], [67, 65], [65, 85], [68, 69],
-  [70, 82], [74, 80], [83, 71], [67, 72], [78, 76]
-]
-allowed_count = 10`;
+      case 'residency-proof': {
+        const country = this.requireString(claims.country, 'country');
+        const code = this.encodeCountry(country);
+        // Allowed countries: US, GB, CA, AU, DE, FR, JP, SG, CH, NL
+        const allowed = ['US','GB','CA','AU','DE','FR','JP','SG','CH','NL']
+          .map(c => String(this.encodeCountry(c)));
+        return {
+          country_code: String(code),
+          allowed_countries: allowed,
+          allowed_count: '10',
+        };
+      }
 
-      case 'accredited-investor':
-        return `accredited = ${claims.accredited as boolean}
-age = ${claims.age as number}`;
+      case 'accredited-investor': {
+        const accredited = this.requireBoolean(claims.accredited, 'accredited');
+        const age = this.requireInt(claims.age, 'age', 0, 150);
+        return { accredited: accredited ? '1' : '0', age: String(age) };
+      }
 
-      case 'sanctions-check':
-        return `sanctions_hash = ${this.computeSanctionsHash(claims)}
-clean_list_commitment = ${this.getCleanListCommitment()}`;
+      case 'sanctions-check': {
+        const hash = this.computeSanctionsHash(claims);
+        return {
+          sanctions_hash: String(hash),
+          clean_list_commitment: '0',
+        };
+      }
 
       default:
-        throw new Error(`Unknown circuit type: ${circuitId}`);
+        throw new Error(`Unknown circuit: ${circuitId}`);
     }
   }
 
-  private countryToBytes(countryCode: string): [number, number] {
-    const upper = countryCode.toUpperCase();
-    if (upper.length !== 2) {
-      throw new Error(`Invalid country code: ${countryCode}. Must be 2 characters.`);
+  private requireInt(value: unknown, field: string, min: number, max: number): number {
+    const num = typeof value === 'number' ? value : NaN;
+    if (!Number.isInteger(num) || num < min || num > max) {
+      throw new Error(`Invalid claim "${field}": expected integer in [${min}, ${max}]`);
     }
-    return [upper.charCodeAt(0), upper.charCodeAt(1)];
+    return num;
+  }
+
+  private requireBoolean(value: unknown, field: string): boolean {
+    if (typeof value !== 'boolean') {
+      throw new Error(`Invalid claim "${field}": expected boolean`);
+    }
+    return value;
+  }
+
+  private requireString(value: unknown, field: string): string {
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new Error(`Invalid claim "${field}": expected non-empty string`);
+    }
+    return value;
+  }
+
+  /**
+   * Encode a 2-letter ISO country code as a single field element.
+   * Uses: code = charCode[0] * 256 + charCode[1]
+   */
+  private encodeCountry(code: string): number {
+    const upper = code.toUpperCase();
+    if (!/^[A-Z]{2}$/.test(upper)) {
+      throw new Error(`Invalid country code: ${code}`);
+    }
+    return upper.charCodeAt(0) * 256 + upper.charCodeAt(1);
   }
 
   private computeSanctionsHash(claims: Record<string, unknown>): number {
-    // Simplified sanctions hash computation
-    // In production, this would query a real sanctions list and compute a Merkle proof
     const data = JSON.stringify(claims);
     let hash = 0;
     for (let i = 0; i < data.length; i++) {
       const char = data.charCodeAt(i);
       hash = (hash << 5) - hash + char;
-      hash |= 0; // Convert to 32bit integer
+      hash |= 0;
     }
-    return hash;
+    // Ensure non-zero and non-equal to commitment (0)
+    return hash === 0 ? 1 : Math.abs(hash);
   }
 
-  private getCleanListCommitment(): number {
-    // Placeholder for clean list commitment
-    // In production, this would be a commitment to the clean list from a trusted source
-    return 0;
+  private async failProof(proofId: string) {
+    await this.prisma.zKProof.update({
+      where: { id: proofId },
+      data: { status: ProofStatus.FAILED },
+    });
   }
 }

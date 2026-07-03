@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, ShieldCheck } from 'lucide-react';
 import { useAuthContext } from '@/context/auth-context';
 import { Sidebar } from './sidebar';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -31,7 +31,7 @@ export function ProtectedLayout({ children, allowedRoles }: ProtectedLayoutProps
 
   if (isLoading) {
     return (
-      <div className="flex min-h-[calc(100vh-3.5rem)]">
+      <div className="flex min-h-screen">
         <div className="hidden w-60 border-r md:block">
           <div className="space-y-2 p-4">
             {Array.from({ length: 8 }).map((_, i) => (
@@ -50,10 +50,12 @@ export function ProtectedLayout({ children, allowedRoles }: ProtectedLayoutProps
   if (!token) return null;
 
   return (
-    <div className="flex min-h-[calc(100vh-3.5rem)]">
+    <div className="flex min-h-screen">
       {/* Desktop sidebar */}
-      <div className="hidden md:block">
-        <Sidebar />
+      <div className="hidden md:flex md:flex-col" style={{ width: 240, flexShrink: 0 }}>
+        <div className="sticky top-0 h-screen overflow-hidden">
+          <Sidebar />
+        </div>
       </div>
 
       {/* Mobile sidebar overlay */}
@@ -72,7 +74,7 @@ export function ProtectedLayout({ children, allowedRoles }: ProtectedLayoutProps
       {/* Main content */}
       <div className="flex flex-1 flex-col min-w-0">
         {/* Mobile top bar */}
-        <div className="flex items-center gap-2 border-b px-4 py-2 md:hidden">
+        <div className="flex items-center gap-3 border-b px-4 md:hidden" style={{ height: 56, flexShrink: 0 }}>
           <button
             type="button"
             onClick={() => setSidebarOpen(true)}
@@ -80,7 +82,8 @@ export function ProtectedLayout({ children, allowedRoles }: ProtectedLayoutProps
           >
             {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
-          <span className="text-sm font-medium">STPrivy</span>
+          <ShieldCheck className="h-4 w-4 text-primary" />
+          <span className="font-mono text-sm font-bold tracking-widest">STPrivy</span>
         </div>
 
         <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>

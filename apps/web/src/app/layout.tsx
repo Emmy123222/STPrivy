@@ -8,6 +8,7 @@ const spaceMono = Space_Mono({
   subsets: ['latin'],
   variable: '--font-space-mono',
   display: 'swap',
+  preload: false,
 });
 
 export const metadata: Metadata = {

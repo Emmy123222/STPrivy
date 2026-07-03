@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
-# Deploy and initialize all STPrivy contracts.
-# Passes the uploaded Wasm hash into initialize so the deployed binary origin is verifiable on-chain.
+# Deploy and initialize all STPrivy contracts (Circom/Groth16 edition).
+#
+# For each circuit this script:
+#   1. Compiles the .circom file with circom
+#   2. Runs the trusted setup (groth16 setup + contribution) to produce a .zkey
+#   3. Exports the verification key JSON
+#   4. Encodes the VK into Soroban bytes format
+#   5. Deploys the kyc-registry contract
+#   6. Calls set_vk on the contract for each circuit
 #
 # Usage:
 #   STELLAR_SECRET=S... ADMIN_ADDRESS=G... [NETWORK=testnet] ./deploy.sh
 #
-# Requirements: stellar CLI, cargo, rust wasm32v1-none target
+# Requirements: stellar CLI, cargo, rust wasm32v1-none target, circom, snarkjs, node
 
 set -euo pipefail
 
@@ -17,131 +24,95 @@ RPC_URL="https://soroban-testnet.stellar.org"
 [ "$NETWORK" = "mainnet" ] && RPC_URL="https://soroban.stellar.org"
 
 CONTRACTS_DIR="$(cd "$(dirname "$0")" && pwd)"
-WASM_OUT="$CONTRACTS_DIR/target/wasm32v1-none/release"
-
-# ── 1. Build ──────────────────────────────────────────────────────────────────
-echo "==> Building contracts..."
-cargo build --manifest-path "$CONTRACTS_DIR/Cargo.toml" \
-  --target wasm32v1-none --release \
-  -p issuer-registry -p revocation-registry -p proof-verifier
-
-# ── 2. Helper: upload wasm and return hash ────────────────────────────────────
-upload() {
-  local wasm_file="$1"
-  stellar contract upload \
-    --network "$NETWORK" \
-    --rpc-url "$RPC_URL" \
-    --source "$SOURCE_ACCOUNT" \
-    --wasm "$wasm_file" \
-    2>/dev/null
-}
-
-# ── 3. Helper: deploy contract and return contract id ─────────────────────────
-deploy() {
-  local wasm_hash="$1"
-  stellar contract deploy \
-    --network "$NETWORK" \
-    --rpc-url "$RPC_URL" \
-    --source "$SOURCE_ACCOUNT" \
-    --wasm-hash "$wasm_hash" \
-    2>/dev/null
-}
-
-# ── 4. Issuer Registry ────────────────────────────────────────────────────────
-echo "==> Uploading issuer-registry..."
-ISSUER_WASM_HASH=$(upload "$WASM_OUT/issuer_registry.wasm")
-echo "    wasm_hash: $ISSUER_WASM_HASH"
-
-echo "==> Deploying issuer-registry..."
-ISSUER_CONTRACT_ID=$(deploy "$ISSUER_WASM_HASH")
-echo "    contract_id: $ISSUER_CONTRACT_ID"
-
-echo "==> Initializing issuer-registry..."
-stellar contract invoke \
-  --network "$NETWORK" --rpc-url "$RPC_URL" --source "$SOURCE_ACCOUNT" \
-  --id "$ISSUER_CONTRACT_ID" \
-  -- initialize \
-  --admin "$ADMIN" \
-  --wasm_hash "$ISSUER_WASM_HASH"
-
-# ── 5. Revocation Registry ────────────────────────────────────────────────────
-echo "==> Uploading revocation-registry..."
-REVOCATION_WASM_HASH=$(upload "$WASM_OUT/revocation_registry.wasm")
-echo "    wasm_hash: $REVOCATION_WASM_HASH"
-
-echo "==> Deploying revocation-registry..."
-REVOCATION_CONTRACT_ID=$(deploy "$REVOCATION_WASM_HASH")
-echo "    contract_id: $REVOCATION_CONTRACT_ID"
-
-echo "==> Initializing revocation-registry..."
-stellar contract invoke \
-  --network "$NETWORK" --rpc-url "$RPC_URL" --source "$SOURCE_ACCOUNT" \
-  --id "$REVOCATION_CONTRACT_ID" \
-  -- initialize \
-  --admin "$ADMIN" \
-  --wasm_hash "$REVOCATION_WASM_HASH"
-
-# ── 6. Proof Verifier (one per circuit) ───────────────────────────────────────
-echo "==> Uploading proof-verifier..."
-VERIFIER_WASM_HASH=$(upload "$WASM_OUT/proof_verifier.wasm")
-echo "    wasm_hash: $VERIFIER_WASM_HASH"
-
-deploy_verifier() {
-  local circuit_name="$1"
-  local vk_file="$2"
-
-  if [ ! -f "$vk_file" ]; then
-    echo "    SKIP $circuit_name: VK file not found at $vk_file"
-    return
-  fi
-
-  echo "==> Deploying proof-verifier for $circuit_name..."
-  local contract_id
-  contract_id=$(deploy "$VERIFIER_WASM_HASH")
-  echo "    contract_id: $contract_id"
-
-  echo "==> Initializing proof-verifier for $circuit_name..."
-  stellar contract invoke \
-    --network "$NETWORK" --rpc-url "$RPC_URL" --source "$SOURCE_ACCOUNT" \
-    --id "$contract_id" \
-    -- initialize \
-    --vk "$(xxd -p -c 0 "$vk_file")" \
-    --wasm_hash "$VERIFIER_WASM_HASH"
-
-  echo "    VERIFIER_${circuit_name^^}_CONTRACT_ID=$contract_id"
-}
-
 CIRCUITS_DIR="$CONTRACTS_DIR/../circuits"
-deploy_verifier "age_proof"    "$CIRCUITS_DIR/age-proof/target/vk"
+WASM_OUT="$CONTRACTS_DIR/soroban/kyc_registry/target/wasm32v1-none/release"
 
-# ── 7. Verify wasm hashes on-chain ────────────────────────────────────────────
-echo ""
-echo "==> Verifying on-chain wasm hashes match uploaded binaries..."
+# Powers of Tau file (BLS12-381, size 12 supports circuits up to 4096 constraints)
+PTAU_FILE="$CIRCUITS_DIR/powersOfTau28_hez_final_12.ptau"
 
-verify() {
-  local name="$1"
-  local contract_id="$2"
-  local expected_hash="$3"
+# ── 0. Download Powers of Tau if missing ──────────────────────────────────────
+if [ ! -f "$PTAU_FILE" ]; then
+  echo "==> Downloading Powers of Tau file (BLS12-381, size 12)..."
+  curl -L -o "$PTAU_FILE" \
+    "https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_12.ptau"
+fi
 
-  local stored
-  stored=$(stellar contract invoke \
-    --network "$NETWORK" --rpc-url "$RPC_URL" --source "$SOURCE_ACCOUNT" \
-    --id "$contract_id" \
-    -- get_wasm_hash 2>/dev/null)
+# ── 1. Build KYC registry contract ───────────────────────────────────────────
+echo "==> Building kyc-registry contract..."
+cargo build \
+  --manifest-path "$CONTRACTS_DIR/soroban/kyc_registry/Cargo.toml" \
+  --target wasm32v1-none --release
 
-  if [ "$stored" = "\"$expected_hash\"" ] || [ "$stored" = "$expected_hash" ]; then
-    echo "    OK  $name: $stored"
-  else
-    echo "    FAIL $name: stored=$stored expected=$expected_hash" >&2
-    exit 1
+KYC_WASM="$WASM_OUT/kyc_registry.wasm"
+
+# ── 2. Upload and deploy kyc-registry ────────────────────────────────────────
+echo "==> Uploading kyc-registry..."
+KYC_WASM_HASH=$(stellar contract upload \
+  --network "$NETWORK" --rpc-url "$RPC_URL" \
+  --source-account "$SOURCE_ACCOUNT" --wasm "$KYC_WASM" 2>/dev/null)
+echo "    wasm_hash: $KYC_WASM_HASH"
+
+echo "==> Deploying kyc-registry..."
+KYC_CONTRACT_ID=$(stellar contract deploy \
+  --network "$NETWORK" --rpc-url "$RPC_URL" \
+  --source-account "$SOURCE_ACCOUNT" --wasm-hash "$KYC_WASM_HASH" 2>/dev/null)
+echo "    contract_id: $KYC_CONTRACT_ID"
+
+# ── 3. Compile circuits, run trusted setup, upload VKs ───────────────────────
+compile_and_upload_vk() {
+  local circuit_id="$1"
+  local circuit_dir="$CIRCUITS_DIR/$circuit_id"
+  local circom_file="$circuit_dir/src/main.circom"
+  local target_dir="$circuit_dir/target"
+
+  mkdir -p "$target_dir"
+
+  echo "==> Compiling circuit: $circuit_id..."
+  circom "$circom_file" --r1cs --wasm --output "$target_dir" 2>/dev/null
+
+  local r1cs="$target_dir/${circuit_id//-/_}.r1cs"
+  # circom names the r1cs after the component, not the directory; use main.r1cs
+  [ -f "$r1cs" ] || r1cs="$target_dir/main.r1cs"
+
+  local zkey0="$target_dir/circuit_0000.zkey"
+  local zkey_final="$target_dir/$circuit_id.zkey"
+  local vkey="$target_dir/verification_key.json"
+
+  if [ ! -f "$zkey_final" ]; then
+    echo "==> Trusted setup for $circuit_id..."
+    snarkjs groth16 setup "$r1cs" "$PTAU_FILE" "$zkey0"
+    snarkjs zkey contribute "$zkey0" "$zkey_final" \
+      --name="initial-contribution" -v -e="deploy-entropy-$(date +%s)"
+    rm -f "$zkey0"
   fi
+
+  echo "==> Exporting verification key for $circuit_id..."
+  snarkjs zkey export verificationkey "$zkey_final" "$vkey"
+
+  echo "==> Encoding VK for Soroban ($circuit_id)..."
+  # Use the circom-to-soroban helper (Node.js script) to convert JSON VK to hex
+  local vk_hex
+  vk_hex=$(node "$CONTRACTS_DIR/tools/vk_to_hex.js" "$vkey")
+
+  echo "==> Uploading VK on-chain for $circuit_id..."
+  stellar contract invoke \
+    --network "$NETWORK" --rpc-url "$RPC_URL" \
+    --source-account "$SOURCE_ACCOUNT" \
+    --id "$KYC_CONTRACT_ID" \
+    -- set_vk \
+    --admin "$ADMIN" \
+    --circuit_id "$circuit_id" \
+    --vk "$vk_hex"
+
+  echo "    OK: $circuit_id VK uploaded"
 }
 
-verify "issuer-registry"    "$ISSUER_CONTRACT_ID"    "$ISSUER_WASM_HASH"
-verify "revocation-registry" "$REVOCATION_CONTRACT_ID" "$REVOCATION_WASM_HASH"
+compile_and_upload_vk "age-proof"
+compile_and_upload_vk "residency-proof"
+compile_and_upload_vk "accredited-investor"
+compile_and_upload_vk "sanctions-check"
 
-# ── 8. Print .env block ───────────────────────────────────────────────────────
+# ── 4. Print .env block ───────────────────────────────────────────────────────
 echo ""
 echo "==> Add to your .env:"
-echo "ISSUER_REGISTRY_CONTRACT_ID=$ISSUER_CONTRACT_ID"
-echo "REVOCATION_REGISTRY_CONTRACT_ID=$REVOCATION_CONTRACT_ID"
+echo "KYC_REGISTRY_CONTRACT_ID=$KYC_CONTRACT_ID"

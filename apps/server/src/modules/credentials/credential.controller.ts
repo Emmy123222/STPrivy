@@ -14,6 +14,7 @@ import {
 import { IsOptional, IsDateString, IsString, IsNotEmpty, IsBoolean, IsInt, Min, Max, Length } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ConfigService } from '@nestjs/config';
+import { Keypair } from '@stellar/stellar-sdk';
 import { CredentialService } from './credential.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, AuthenticatedUser } from '../../common/decorators/current-user.decorator';
@@ -78,7 +79,8 @@ export class CredentialController {
     // 2. Ensure the platform issuer exists in DB (upsert from env config)
     const issuerAddress =
       this.config.get<string>('ISSUER_PUBLIC_KEY') ??
-      this.config.get<string>('STELLAR_SERVER_PUBLIC')!;
+      this.config.get<string>('STELLAR_SERVER_PUBLIC') ??
+      Keypair.fromSecret(this.config.get<string>('STELLAR_SERVER_SECRET')!).publicKey();
     const issuerDID = `did:stellar:${issuerAddress}`;
 
     await this.prisma.issuer.upsert({
