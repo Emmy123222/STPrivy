@@ -15,6 +15,10 @@ export const metadata: Metadata = {
   title: 'zkKYC — Privacy-First Compliance on Stellar',
   description:
     'Prove who you are. Reveal nothing else. Zero-knowledge identity verification on Stellar.',
+  icons: {
+    icon: '/icon.jpg',
+    apple: '/icon.jpg',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

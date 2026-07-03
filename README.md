@@ -1,6 +1,6 @@
-# STPrivy — Privacy-Preserving KYC on Stellar
+# zkKYC — Privacy-Preserving KYC on Stellar
 
-STPrivy is a zero-knowledge KYC compliance platform built on the Stellar network. It lets users prove regulatory compliance — age, nationality, accredited investor status, sanctions clearance — to protocols and applications **without revealing any underlying personal data**. Everything is anchored to Soroban smart contracts on Stellar testnet.
+zkKYC is a zero-knowledge KYC compliance platform built on the Stellar network. It lets users prove regulatory compliance — age, nationality, accredited investor status, sanctions clearance — to protocols and applications **without revealing any underlying personal data**. Everything is anchored to Soroban smart contracts on Stellar testnet.
 
 ---
 
@@ -8,7 +8,7 @@ STPrivy is a zero-knowledge KYC compliance platform built on the Stellar network
 
 ### The Core Idea
 
-Traditional KYC forces users to hand over raw personal data to every service they use. STPrivy flips this: a user goes through KYC once, receives a **W3C Verifiable Credential** signed by an authorized issuer, and can then generate a **zero-knowledge proof** from that credential to prove specific claims (e.g. "I am over 18") to any verifier — without revealing their name, date of birth, passport number, or any other raw data.
+Traditional KYC forces users to hand over raw personal data to every service they use. zkKYC flips this: a user goes through KYC once, receives a **W3C Verifiable Credential** signed by an authorized issuer, and can then generate a **zero-knowledge proof** from that credential to prove specific claims (e.g. "I am over 18") to any verifier — without revealing their name, date of birth, passport number, or any other raw data.
 
 The verifier never sees the credential. They only see the proof and its public outputs.
 
@@ -153,8 +153,8 @@ The identity verification flow uses **Veriff** with a real API key. Here is how 
 ### Setup
 
 ```bash
-git clone https://github.com/johnsmccain/STPrivy.git
-cd STPrivy
+git clone https://github.com/johnsmccain/zkKYC.git
+cd zkKYC
 npm install
 ```
 
@@ -203,7 +203,7 @@ Frontend: `http://localhost:3001` — Backend: `http://localhost:3002`
 ## Project Structure
 
 ```
-STPrivy/
+zkKYC/
 ├── apps/
 │   ├── server/                    # NestJS backend
 │   │   ├── src/modules/
