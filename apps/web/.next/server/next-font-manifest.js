@@ -1,1 +1,1 @@
-self.__NEXT_FONT_MANIFEST="{\"pages\":{},\"app\":{\"/media/john-danlami/Backup/Projects/hackerthon/STPrivy-v2/apps/web/src/app/layout\":[]},\"appUsingSizeAdjust\":true,\"pagesUsingSizeAdjust\":false}"
+self.__NEXT_FONT_MANIFEST='{"pages":{},"app":{"/home/emmanuel-ogheneovo/Zk/STPrivy/apps/web/src/app/layout":[]},"appUsingSizeAdjust":true,"pagesUsingSizeAdjust":false}';

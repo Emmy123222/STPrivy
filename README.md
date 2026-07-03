@@ -116,6 +116,7 @@ We want to be fully transparent about what is production-grade, what is wired bu
 | DID creation (`did:stellar`) | ✅ Real — stored, resolved, W3C compliant |
 | W3C VC issuance with Ed25519 signature | ✅ Real — cryptographically signed with server keypair |
 | Credential hash (SHA-256) | ✅ Real — computed deterministically from claims + issuer + subject |
+| Veriff identity verification (session + webhook + auto-VC) | ✅ Real — live Veriff API key, real session creation |
 | `is_issuer` on-chain check (issuer-registry) | ✅ Real — queries live Soroban contract on Stellar testnet |
 | `revoke_credential` on-chain (revocation-registry) | ✅ Real — transaction submitted to Stellar testnet, visible on Stellar Expert |
 | `is_revoked` on-chain check | ✅ Real — queries live revocation-registry contract |
@@ -124,21 +125,21 @@ We want to be fully transparent about what is production-grade, what is wired bu
 | Live health check (DB + Stellar RPC) | ✅ Real — pings both services with latency measurement |
 | 3 Soroban contracts deployed on testnet | ✅ Real — verified on Stellar Explorer |
 
-### One Honest Gap — KYC Provider Integration
+### KYC Provider — Veriff Integration
 
-The KYC claim collection (country, age, accredited status) currently uses **placeholder / self-submitted data**. Here is why and what the production flow looks like:
+The identity verification flow uses **Veriff** with a real API key. Here is how the full flow works:
 
-We built the UI and backend to integrate with third-party identity verification providers — **SumSub, Veriff, Persona** — where a user would upload their ID document, complete a liveness check, and the provider would return verified claims to our backend via webhook. Our backend would then sign those verified claims as a W3C Verifiable Credential.
+1. User clicks "Start Veriff Verification" on the KYC form
+2. Our backend calls `POST https://stationapi.veriff.com/v1/sessions` with the Veriff API key — this creates a real Veriff session
+3. The `@veriff/incontext-sdk` launches the Veriff widget (camera capture, document upload, liveness check) inside an iframe
+4. When the user submits, Veriff reviews the submission and fires a webhook decision to our backend at `POST /veriff/webhook`
+5. On approval, the backend automatically issues a W3C Verifiable Credential from the Veriff-verified claims (country from document, age from date of birth)
 
-**The gap:** We did not subscribe to any of these services. SumSub and Veriff require paid business accounts, which we could not obtain for this hackathon submission. As a result, the KYC claims users submit are **self-declared through a form** — the user fills in their own country, age, and accreditation status. There is no document verification or liveness check happening.
+**What's real:** The Veriff API integration is fully wired — session creation, SDK launch, webhook handler, and auto-VC issuance on approval. The API key (`b5136c93-53f0-440d-87e0-f885e877a9a4`) is a real Veriff test account key.
 
-Everything downstream of that form input is real:
-- The claims get packaged into a W3C Verifiable Credential
-- The credential is signed with a real Ed25519 signature
-- The issuer is verified against the on-chain issuer-registry before signing
-- The credential hash is stored and can be revoked on-chain
+**One caveat for local testing:** The Veriff webhook fires to a public URL. When running locally, you need a tool like [ngrok](https://ngrok.com/) to expose `localhost:3002` so Veriff can reach the `POST /veriff/webhook` endpoint. Without it, the session UI launches but the auto-issuance on completion doesn't fire. The manual KYC form (non-Veriff providers) works without any external tunnel.
 
-In production, replacing the form with a SumSub/Veriff SDK widget and wiring their webhook to `POST /credentials/issue` is the only change needed to make this fully real. The rest of the pipeline is production-ready.
+**SumSub and Persona:** These remain unintegrated — they require separate paid business accounts. The provider selector on the KYC start page shows all three, but only Veriff and the manual self-submission form are wired up.
 
 ---
 
@@ -174,7 +175,10 @@ PROOF_VERIFIER_CONTRACT_ID_AGE_PROOF=CC4PCG66IJW6YJYVVY2TRC3ZHZA46BHPB6MVXE2URGZ
 
 **Frontend** (`apps/web/.env.local`):
 ```env
-NEXT_PUBLIC_API_URL=http://localhost:3002/api/v1
+BACKEND_URL=http://localhost:3002
+NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1
+NEXT_PUBLIC_STELLAR_NETWORK=testnet
+NEXT_PUBLIC_VERIFF_API_KEY=<your-veriff-api-key>
 ```
 
 **Database:**
@@ -250,7 +254,7 @@ https://stellar.expert/explorer/testnet/contract/CANCMXEGGKETATRNH7MSAQZTJ3M3IG4
 ## What's Next
 
 - **Real ZK proof generation** — wire `bb.js` UltraHonk prover to compiled Noir circuits via a BullMQ background worker
-- **Real KYC provider** — SumSub / Persona webhook to receive verified claims before issuing credentials
+- **SumSub / Persona** — additional KYC provider integrations (Veriff is live; SumSub and Persona require separate accounts)
 - **Deploy remaining proof-verifier contracts** — one per circuit for residency, accreditation, sanctions
 - **Credential-registry contract** — anchor credential hashes at issuance, not just at revocation
 - **On-chain DID anchoring** — write DID documents to a Stellar contract
@@ -261,4 +265,4 @@ https://stellar.expert/explorer/testnet/contract/CANCMXEGGKETATRNH7MSAQZTJ3M3IG4
 
 ## Closing Note
 
-This is an honest work-in-progress. The on-chain contracts are real and verifiable on Stellar Explorer. The credential cryptography (Ed25519 signing, SHA-256 hashing, W3C VC format) is real. The end-to-end flow — wallet auth → DID → issue credential → generate proof → request/respond → revoke — works locally and on Stellar testnet. The one honest gap is KYC claim collection: without a SumSub or Veriff subscription we could not integrate a real identity verification provider, so claims are self-submitted for now. We documented this clearly rather than hiding it.
+This is an honest work-in-progress. The on-chain contracts are real and verifiable on Stellar Explorer. The credential cryptography (Ed25519 signing, SHA-256 hashing, W3C VC format) is real. Veriff identity verification is wired end-to-end with a live API key. The end-to-end flow — wallet auth → DID → KYC via Veriff → issue credential → generate proof → request/respond → revoke — works locally and on Stellar testnet. For judging, the manual KYC form (non-Veriff) works fully without an ngrok tunnel; Veriff requires a tunnel for the webhook to fire.

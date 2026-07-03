@@ -1,14 +1,14 @@
 {
   "app/kyc/form/page.tsx -> @veriff/incontext-sdk": {
-    "id": "app/kyc/form/page.tsx -> @veriff/incontext-sdk",
+    "id": 5384,
     "files": [
-      "static/chunks/_app-pages-browser_node_modules_veriff_incontext-sdk_dist_index_esm_js.js"
+      "static/chunks/5384.7a10720f032f0773.js"
     ]
   },
   "hooks/use-wallet.ts -> @stellar/freighter-api": {
-    "id": "hooks/use-wallet.ts -> @stellar/freighter-api",
+    "id": 6063,
     "files": [
-      "static/chunks/_app-pages-browser_node_modules_stellar_freighter-api_build_index_min_js.js"
+      "static/chunks/6063.ddd5a90daf94ebc6.js"
     ]
   }
 }

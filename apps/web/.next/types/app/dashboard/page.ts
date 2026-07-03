@@ -1,4 +1,4 @@
-// File: /media/john-danlami/Backup/Projects/hackerthon/STPrivy-v2/apps/web/src/app/dashboard/page.tsx
+// File: /home/emmanuel-ogheneovo/Zk/STPrivy/apps/web/src/app/dashboard/page.tsx
 import * as entry from '../../../../src/app/dashboard/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 
