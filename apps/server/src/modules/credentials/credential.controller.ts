@@ -78,6 +78,7 @@ export class CredentialController {
       await this.didService.createDID(user.userId, user.address);
       did = await this.prisma.dID.findUnique({ where: { userId: user.userId } });
     }
+    if (!did) throw new BadRequestException('Failed to create DID');
 
     // 2. Ensure the platform issuer exists in DB (upsert from env config)
     const issuerAddress =
